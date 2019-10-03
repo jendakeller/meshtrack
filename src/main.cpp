@@ -299,6 +299,7 @@ struct BlobModel
 {
   std::vector<Gauss> blobs;
   std::vector<V3f> colors;
+  std::vector<V3f> hsvColors;
   A2f blobWeights;
 
   void updateBlobs(const std::vector<V3f>& vertices, const A2f& weights, std::vector<Gauss>& blobs, int jointId);
@@ -613,6 +614,53 @@ bool intersectMesh(const Ray& ray,
 
 // =================== END OF INTERSECTIONS ========================
 
+void rgb2hsv(float r,float g,float b,float* h,float* s,float* v)
+{
+  const float rgbMin = std::min(r,std::min(g,b));
+  const float rgbMax = std::max(r,std::max(g,b));
+
+  const float delta = rgbMax - rgbMin;
+
+  *v = rgbMax;
+
+  *s = (rgbMax > 0) ? (delta / rgbMax) : 0;
+
+  if (delta > 0)
+  {
+    if (r>=g && r>=b) { *h = (       (g-b) / delta) * 60.0f / 360.0f; }
+    if (g>=r && g>=b) { *h = (2.0f + (b-r) / delta) * 60.0f / 360.0f; }
+    if (b>=r && b>=g) { *h = (4.0f + (r-g) / delta) * 60.0f / 360.0f; }
+
+    if (*h<0.0f) *h = 1.0f+*h;
+  }
+  else
+  {
+    *h = 0;
+  }
+}
+
+V3f rgb2hsv(const V3f& c)
+{
+  const float r = c(0);
+  const float g = c(1);
+  const float b = c(2);
+
+  float h,s,v;
+
+  rgb2hsv(r,g,b,&h,&s,&v);
+
+  return V3f(h,s,v);
+}
+
+V3f hsvCone(const V3f hsv)
+{
+  const float h = hsv(0);
+  const float s = hsv(1);
+  const float v = hsv(2);
+
+  return V3f(cos(6.28318530718f*h),v,sin(6.28318530718f*h));
+}
+
 //=========================== BLOB MODEL ========================
 
 void BlobModel::updateBlobs(const std::vector<V3f>& vertices, const A2f& weights, std::vector<Gauss>& blobs, int jointId)
@@ -904,6 +952,7 @@ void BlobModel::updateBlobColors(const std::vector<View>& views, const SkinningM
   for (int i=0;i<colors.size();i++)
   {
     colors[i] = (counts[i]>0) ? colors[i] / (255.0f * counts[i]) : V3f(1,0,0);
+    hsvColors[i] = hsvCone(rgb2hsv(colors[i]));
   }
 }
 
@@ -1125,6 +1174,7 @@ void BlobModel::build(const SkinningModel& model)
   }
 
   colors = std::vector<V3f>(blobs.size(), V3f(1.0f,0.0f,0.0f));
+  hsvColors = std::vector<V3f>(blobs.size(), V3f(0.0f, 0.0f, 0.0f));
 
   updateWeights(model.vertices, model.weights);
 }
@@ -2247,8 +2297,6 @@ struct TrackBlobsEnergy
 
     deformSamplePoints(restBlobCenters,Ms,blobModel.blobWeights,&blobCenters);
 
-    //float iBlobSelfOverlap = 2.0f*E(views[0].imageBlobs[0],views[0].imageBlobs[0]);
-
     #pragma omp parallel for
     for (int i=0;i<views.size();i++)
     {
@@ -2292,7 +2340,7 @@ struct TrackBlobsEnergy
           T denom = sqr(iBlob.sigma) + sqr(sigma2D[j]);
           T blobOverlap = 6.2832f*sqr(iBlob.sigma)*sqr(sigma2D[j])/denom * std::exp(-(dist2/denom));
 
-          float colorSim = phi31(norm(hsvCone(iBlob.hsvColor) - hsvCone(rgb2hsv(blobModel.colors[j]))));
+          float colorSim = phi31(norm(iBlob.hsvColor - blobModel.hsvColors[j]));
           iBlobSum += colorSim*blobOverlap;
 #ifdef DEBUG_BLOBS
           drawCircle(I,(int)xy[0].a,(int)xy[1].a,(int)sigma2D[j].a,V3uc(0,255,0));
@@ -2300,7 +2348,10 @@ struct TrackBlobsEnergy
         }
         float iBlobSelfOverlap = 2.0f*E(iBlob,iBlob);
 
-        sum -= std::min(iBlobSum,iBlobSelfOverlap) / view.sumBlobsOverlaps;
+        #pragma omp critical
+        {
+          sum -= std::min(iBlobSum,iBlobSelfOverlap) / view.sumBlobsOverlaps;
+        }
       }
 
 #ifdef DEBUG_BLOBS
@@ -2659,54 +2710,6 @@ A2uc getMask(const A2V3uc& image,const A2V3uc& background,const float threshold,
   return mask;
 }
 
-
-void rgb2hsv(float r,float g,float b,float* h,float* s,float* v)
-{
-  const float rgbMin = std::min(r,std::min(g,b));
-  const float rgbMax = std::max(r,std::max(g,b));
-
-  const float delta = rgbMax - rgbMin;
-
-  *v = rgbMax;
-
-  *s = (rgbMax > 0) ? (delta / rgbMax) : 0;
-
-  if (delta > 0)
-  {
-    if (r>=g && r>=b) { *h = (       (g-b) / delta) * 60.0f / 360.0f; }
-    if (g>=r && g>=b) { *h = (2.0f + (b-r) / delta) * 60.0f / 360.0f; }
-    if (b>=r && b>=g) { *h = (4.0f + (r-g) / delta) * 60.0f / 360.0f; }
-
-    if (*h<0.0f) *h = 1.0f+*h;
-  }
-  else
-  {
-    *h = 0;
-  }
-}
-
-V3f rgb2hsv(const V3f& c)
-{
-  const float r = c(0);
-  const float g = c(1);
-  const float b = c(2);
-
-  float h,s,v;
-
-  rgb2hsv(r,g,b,&h,&s,&v);
-
-  return V3f(h,s,v);
-}
-
-V3f hsvCone(const V3f hsv)
-{
-  const float h = hsv(0);
-  const float s = hsv(1);
-  const float v = hsv(2);
-
-  return V3f(cos(6.28318530718f*h),v,sin(6.28318530718f*h));
-}
-
 float phi31(float x)
 {
   return abs(x) < 1.0f ? (std::max(std::pow(1.0f-abs(x),4.0f),0.0f)*(1.0f+4.0f*abs(x))) : 0.0f;
@@ -2759,7 +2762,7 @@ void genImageBlobs(const std::vector<AABB>& bboxes, int w, std::vector<View>* in
         blob.sigma = w/2.0f;
         blob.mu = V2f(x+blob.sigma,y+blob.sigma);
         blob.rgbColor = c / (w*w*255.0f);
-        blob.hsvColor = rgb2hsv(blob.rgbColor);
+        blob.hsvColor = hsvCone(rgb2hsv(blob.rgbColor));
         view.imageBlobs.push_back(blob);
       }
     }
@@ -3331,8 +3334,8 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
       int y0 = imageBlob.mu[1] - imageBlob.sigma;
       int x1 = imageBlob.mu[0] + imageBlob.sigma;
       int y1 = imageBlob.mu[1] + imageBlob.sigma;
-      for (int y=y0;y<=y1;y++)
-      for (int x=x0;x<=x1;x++)
+      for (int y=y0;y<y1;y++)
+      for (int x=x0;x<x1;x++)
       {
         mask(x,y) = V3uc(255.0f*imageBlob.rgbColor);
       }
