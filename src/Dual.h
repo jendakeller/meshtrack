@@ -21,6 +21,8 @@ public:
   Dual<T>& operator=(const Dual<T>& d);
 
   Dual<T> operator+=(const Dual<T>& d);
+
+  Dual<T> operator-=(const Dual<T>& d);
 };
 
 template<typename T>
@@ -67,6 +69,14 @@ Dual<T> Dual<T>::operator+=(const Dual<T>& d)
 {
   a = a + d.a;
   b = b + d.b;
+  return *this;
+}
+
+template<typename T>
+Dual<T> Dual<T>::operator-=(const Dual<T>& d)
+{
+  a = a - d.a;
+  b = b - d.b;
   return *this;
 }
 
@@ -229,6 +239,7 @@ public:
   DenseDual<T>& operator+=(const Dual<T>& d);
   DenseDual<T>& operator-=(const Dual<T>& d);
   DenseDual<T>& operator+=(const DenseDual<T>& d);
+  DenseDual<T>& operator-=(const DenseDual<T>& d);
 };
 
 template<typename T>
@@ -257,7 +268,6 @@ DenseDual<T>& DenseDual<T>::operator+=(const Dual<T>& d)
   return *this;
 }
 
-/*
 template<typename T>
 DenseDual<T>& DenseDual<T>::operator+=(const DenseDual<T>& d)
 {
@@ -270,5 +280,51 @@ DenseDual<T>& DenseDual<T>::operator+=(const DenseDual<T>& d)
 
   return *this;
 }
-*/
+
+template<typename T>
+DenseDual<T>& DenseDual<T>::operator-=(const DenseDual<T>& d)
+{
+  a -= d.a;
+
+  for(int i=0;i<d.b.size();i++)
+  {
+    b[i] -= d.b[i];
+  }
+
+  return *this;
+}
+
+namespace std
+{
+  template<typename T>
+  DenseDual<T> min(const DenseDual<T>& x,const T& y)
+  {
+    DenseDual<T> r(x);
+
+    if (x.a > y)
+    {
+      r.a = y;
+      for (int i=0;i<r.b.size();i++)
+      {
+        r.b[i] = T(0.0);
+      }
+    }
+    
+    return r;
+  }
+}
+
+template<typename T>
+inline DenseDual<T> operator/(const DenseDual<T>& x,const T y)
+{
+  DenseDual<T> r(x);
+  r.a = r.a / y;
+  for (int i=0;i<r.b.size();i++)
+  {
+    r.b[i] = r.b[i] / y;
+  }
+
+  return r;
+}
+
 #endif
