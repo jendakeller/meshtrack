@@ -187,6 +187,12 @@ inline ShortDual<N> operator+(const ShortDual<N> &x,const float y)
 }
 
 template<int N>
+inline ShortDual<N> operator-(const ShortDual<N> &x)
+{
+  return ShortDual<N>(-x.a,-x.b);
+}
+
+template<int N>
 inline ShortDual<N> operator-(const ShortDual<N> &x,const ShortDual<N> &y)
 {
   return ShortDual<N>(x.a-y.a,x.b-y.b);
@@ -2026,25 +2032,25 @@ bail:
   return false;
 }
 
-Vec<2,ShortDual<3>> project(const Mat3x4f& PM,const V3f& x)
+Vec<3,ShortDual<3>> project(const Mat3x4f& PM, const V3f& x)
 {
   V3f Px;
-  for(int i=0;i<3;i++)
+  for (int i=0;i<3;i++)
   {
-    Px[i] = PM(i,0)*x(0) + PM(i,1)*x(1) + PM(i,2)*x(2)+ PM(i,3);
+    Px[i] = PM(i,0)*x(0) + PM(i,1)*x(1) + PM(i,2)*x(2) + PM(i,3);
   }
 
-  Vec<2,ShortDual<3>> ePx;
-  for(int i=0;i<2;i++)
+  Vec<3,ShortDual<3>> dPx;
+  for (int i=0;i<3;i++)
   {
-    ePx[i].a = Px[i]/Px[2];
-    for(int j=0;j<3;j++)
+    dPx[i].a = Px[i];
+    for (int j=0;j<3;j++)
     {
-      ePx[i].b[j] = (PM(i,j)*Px[2] - Px[i]*PM(2,j))/(Px[2]*Px[2]);
+      dPx[i].b[j] = PM(i,j);
     }
   }
 
-  return ePx;
+  return dPx;
 }
 
 float sqr(float x)
@@ -2308,26 +2314,27 @@ struct TrackBlobsEnergy
       
       float f = (fabs(view.camera.K(0,0)) + fabs(view.camera.K(1,1))) / 2.0f;
 
-      std::vector<Vec<2,T>> mu2D(blobCenters.size());
-      std::vector<T> sigma2D(blobCenters.size());
+      std::vector<Vec<2,ShortDual<3>>> mu2D(blobCenters.size());
+      std::vector<ShortDual<3>> sigma2D(blobCenters.size());
       for (int j=0;j<blobCenters.size();j++)
       {
-        Vec<3,T> xyw(view.camera.P(0,3),
-                     view.camera.P(1,3),
-                     view.camera.P(2,3));
-        for (int m=0;m<3;m++)
-        for (int n=0;n<3;n++)
-        {
-          xyw[m] += view.camera.P(m,n)*blobCenters[j][n];
-        }
-        mu2D[j] = p2e(xyw);
-        sigma2D[j] = blobModel.blobs[j].sigma * f / xyw[2];
+        Vec<3,ShortDual<3>> pdbc = project(view.camera.P, V3f(blobCenters[j][0].a, blobCenters[j][1].a, blobCenters[j][2].a));
+        mu2D[j][0] = pdbc[0]/pdbc[2];
+        mu2D[j][1] = pdbc[1]/pdbc[2];
+        sigma2D[j] = blobModel.blobs[j].sigma * f / pdbc[2];
       }
 
       for (int k=0;k<view.imageBlobs.size();k++)
       {
         const ImageBlob& iBlob = view.imageBlobs[k];
-        T iBlobSum = T(0.0f);
+        
+        T2 iBlobSum;
+        iBlobSum.a = 0.0f;
+        iBlobSum.b = Vector<float>(sum.b.size());
+        for (int i=0;i<iBlobSum.b.size();i++)
+        {
+          iBlobSum.b[i] = 0.0f;
+        }
         
         for (int j=0;j<blobCenters.size();j++)
         {
@@ -2336,21 +2343,40 @@ struct TrackBlobsEnergy
           {
             continue;
           }
-          T dist2 = sqr(iBlob.mu[0] - mu2D[j][0]) + sqr(iBlob.mu[1] - mu2D[j][1]);
-          T denom = sqr(iBlob.sigma) + sqr(sigma2D[j]);
-          T blobOverlap = 6.2832f*sqr(iBlob.sigma)*sqr(sigma2D[j])/denom * std::exp(-(dist2/denom));
+          ShortDual<3> dist2 = sqr(iBlob.mu[0] - mu2D[j][0]) + sqr(iBlob.mu[1] - mu2D[j][1]);
+          ShortDual<3> denom = sqr(iBlob.sigma) + sqr(sigma2D[j]);
+          ShortDual<3> blobOverlap = 6.2832f*sqr(iBlob.sigma)*sqr(sigma2D[j])/denom * exp(-(dist2/denom));
 
           float colorSim = phi31(norm(iBlob.hsvColor - blobModel.hsvColors[j]));
-          iBlobSum += colorSim*blobOverlap;
+          ShortDual<3> blobSim = colorSim*blobOverlap;
+
+          iBlobSum.a += blobSim.a;
+          for (int n=0;n<3;n++)
+          {
+            for (int m=0;m<blobCenters[j][n].b.n;m++)
+            {
+              iBlobSum.b[blobCenters[j][n].b.ind[m]] += blobSim.b[n] * blobCenters[j][n].b.val[m];
+            }
+          }
+          
 #ifdef DEBUG_BLOBS
           drawCircle(I,(int)xy[0].a,(int)xy[1].a,(int)sigma2D[j].a,V3uc(0,255,0));
 #endif
         }
         float iBlobSelfOverlap = 2.0f*E(iBlob,iBlob);
 
+        T2 sumPartial;
+        sumPartial.a = 0.0f;
+        sumPartial.b = Vector<float>(arg.size());
+        for (int i=0;i<sumPartial.b.size();i++)
+        {
+          sumPartial.b[i] = 0.0f;
+        }
+        sumPartial -= std::min(iBlobSum,iBlobSelfOverlap) / view.sumBlobsOverlaps;
+
         #pragma omp critical
         {
-          sum -= std::min(iBlobSum,iBlobSelfOverlap) / view.sumBlobsOverlaps;
+          sum += sumPartial;
         }
       }
 
