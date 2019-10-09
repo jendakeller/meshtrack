@@ -24,6 +24,7 @@
 #include "lbfgs.h"
 
 #include "skinningModel.h"
+#include "animation.h"
 
 #include "utils_sampling.hpp"
 
@@ -107,22 +108,6 @@ struct Ray
   inline Ray(const Vec<3,float>& o,
              const Vec<3,float>& d) : o(o),d(d),invd(1.0f/d(0),1.0f/d(1),1.0f/d(2)) { }
 };
-
-template<typename T>
-struct TRS
-{
-  Vec<3,T> t; // translation
-  Vec<3,T> r; // rotation angles (xyz)
-  T        s; // scale
-};
-
-template<typename T>
-struct TRSA
-{
-  TRS<T> trs;
-  std::vector<Vec<3,T>> angles;
-};
-typedef std::vector<TRSA<float>> TRSAAnim;
 
 struct Anchor
 {
@@ -320,18 +305,29 @@ struct BlobModel
 
 
 template<typename T>
+Mat<3,3,T> rotationMatrix(const Vec<3,T>& angles)
+{
+  T cx = std::cos(angles(0));
+  T cy = std::cos(angles(1));
+  T cz = std::cos(angles(2));
+  T sx = std::sin(angles(0));
+  T sy = std::sin(angles(1));
+  T sz = std::sin(angles(2));
+
+  // Rz*Rx*Ry
+  return Mat<3,3,T>(-sx*sy*sz+cy*cz,  sx*sy*cz+cy*sz, -cx*sy,
+                             -cx*sz,           cx*cz,     sx,
+                     sx*cy*sz+sy*cz, -sx*cy*cz+sy*sz,  cx*cy);
+  // Rz*Ry*Rx
+  // return Mat<3,3,T>(cy*cz, cz*sx*sy-cx*sz, cx*cz*sy+sx*sz,
+  //                   cy*sz, sx*sy*sz+cx*cz, cx*sy*sz-cz*sx,
+  //                     -sy,          cy*sx,          cx*cy);
+}
+
+template<typename T>
 Mat<4,4,T> trsMatrix(const TRS<T>& trs)
 {
-  T cx = std::cos(trs.r(0));
-  T cy = std::cos(trs.r(1));
-  T cz = std::cos(trs.r(2));
-  T sx = std::sin(trs.r(0));
-  T sy = std::sin(trs.r(1));
-  T sz = std::sin(trs.r(2));
-
-  Mat<3,3,T> R = Mat<3,3,T>(-sx*sy*sz+cy*cz,  sx*sy*cz+cy*sz, -cx*sy,
-                                     -cx*sz,           cx*cz,     sx,
-                             sx*cy*sz+sy*cz, -sx*cy*cz+sy*sz,  cx*cy);
+  Mat<3,3,T> R = rotationMatrix(trs.r);
 
   const Vec<3,T> t = trs.t;
 
@@ -358,21 +354,6 @@ Vec<4,T> e2p(const Vec<3,T>& x) { return Vec<4,T>(x(0),x(1),x(2),T(1)); }
 V3f unproject(const Camera& camera,const V2f& x)
 {
   return transpose(camera.R)*(inverse(camera.K)*e2p(x));
-}
-
-template<typename T>
-Mat<3,3,T> rotationMatrix(const Vec<3,T>& angles)
-{
-  T cx = std::cos(angles(0));
-  T cy = std::cos(angles(1));
-  T cz = std::cos(angles(2));
-  T sx = std::sin(angles(0));
-  T sy = std::sin(angles(1));
-  T sz = std::sin(angles(2));
-
-  return Mat<3,3,T>(-sx*sy*sz+cy*cz, sx*sy*cz+cy*sz, -cx*sy,
-                    -cx*sz,                   cx*cz,     sx,
-                      sx*cy*sz+sy*cz, -sx*cy*cz+sy*sz, cx*cy);
 }
 
 template<typename T>
@@ -446,12 +427,12 @@ void deformSamplePoints(const std::vector<V3f>& samplePoints,
   std::vector<Vec<3,Dual<float>>>& deformedSamplePoints = *out_deformedSamplePoints;
 
   int numVars = 0;
-  for(int m=0;m<Ms.size();m++)
+  for (int m=0;m<Ms.size();m++)
   {
-    for(int i=0;i<4;i++)
-    for(int j=0;j<4;j++)
+    for (int i=0;i<4;i++)
+    for (int j=0;j<4;j++)
     {
-      for(int k=0;k<Ms[m](i,j).b.n;k++)
+      for (int k=0;k<Ms[m](i,j).b.n;k++)
       {
         numVars = std::max(numVars,Ms[m](i,j).b.ind[k]+1);
       }
@@ -459,9 +440,9 @@ void deformSamplePoints(const std::vector<V3f>& samplePoints,
   }
 
   std::vector<Vec<3,std::vector<float>>> perthread_bs(omp_get_max_threads());
-  for(int t=0;t<perthread_bs.size();t++)
+  for (int t=0;t<perthread_bs.size();t++)
   {
-    for(int i=0;i<3;i++) { perthread_bs[t][i] = std::vector<float>(numVars); }
+    for (int i=0;i<3;i++) { perthread_bs[t][i] = std::vector<float>(numVars); }
   }
 
   #pragma omp parallel for
@@ -471,9 +452,9 @@ void deformSamplePoints(const std::vector<V3f>& samplePoints,
 
     V3f a = V3f(0,0,0);
     Vec<3,std::vector<float>>& b = perthread_bs[omp_get_thread_num()];
-    for(int i=0;i<3;i++) { for(int j=0;j<b[i].size();j++) { b[i][j] = 0; } }
+    for (int i=0;i<3;i++) { for (int j=0;j<b[i].size();j++) { b[i][j] = 0; } }
 
-    for(int m=0;m<Ms.size();m++)
+    for (int m=0;m<Ms.size();m++)
     {
       const float weight = sampleWeights(m,s);
 
@@ -481,30 +462,30 @@ void deformSamplePoints(const std::vector<V3f>& samplePoints,
       {
         const Mat<4,4,Dual<float>>& M = Ms[m];
 
-        for(int i=0;i<3;i++)
+        for (int i=0;i<3;i++)
         {
-          for(int j=0;j<3;j++)
+          for (int j=0;j<3;j++)
           {
             const Dual<float>& Mij = M(i,j);
             a[i] += weight*Mij.a*sp[j];
-            for(int k=0;k<Mij.b.n;k++) { b[i][Mij.b.ind[k]] += weight*Mij.b.val[k]*sp[j]; }
+            for (int k=0;k<Mij.b.n;k++) { b[i][Mij.b.ind[k]] += weight*Mij.b.val[k]*sp[j]; }
           }
           
           const Dual<float>& Mij = M(i,3);
           a[i] += weight*Mij.a;
-          for(int k=0;k<Mij.b.n;k++) { b[i][Mij.b.ind[k]] += weight*Mij.b.val[k]; }
+          for (int k=0;k<Mij.b.n;k++) { b[i][Mij.b.ind[k]] += weight*Mij.b.val[k]; }
         }
       }
     }
 
     Vec<3,Dual<float>>& dsp = deformedSamplePoints[s];
-    for(int i=0;i<3;i++)
+    for (int i=0;i<3;i++)
     {
       dsp[i].a = a[i];
       dsp[i].b.n = 0;
       dsp[i].b.ind->clear();
       dsp[i].b.val->clear();
-      for(int j=0;j<b[i].size();j++)
+      for (int j=0;j<b[i].size();j++)
       {
         if (std::abs(b[i][j])>0)
         {
@@ -598,7 +579,7 @@ bool intersectMesh(const Ray& ray,
   bool hit = false;
 
   
-  for(int i=0;i<triangles.size();i++)
+  for (int i=0;i<triangles.size();i++)
   {
     const V3i triangle = triangles[i];
 
@@ -1231,7 +1212,7 @@ View2D viewFitCanvas(const View2D& view,int canvasWidth,int canvasHeight,int pad
   float xmax = -FLT_MAX;
   float ymax = -FLT_MAX;
 
-  for(int i=0;i<4;i++)
+  for (int i=0;i<4;i++)
   {
     const V2f xy = rotate(corners[i],view.angle);
     xmin = std::min(xmin,xy(0));
@@ -1359,8 +1340,8 @@ void getMatrices(const Mat3x4f& Pjzq,Mat4x4f& proj,Mat4x4f& view)
 {
   Eigen::Matrix<double,3,4> P;
 
-  for(int i=0;i<3;i++)
-  for(int j=0;j<4;j++)
+  for (int i=0;i<3;i++)
+  for (int j=0;j<4;j++)
   {
     P(i,j) = Pjzq(i,j);
   }
@@ -1377,8 +1358,8 @@ void getMatrices(const Mat3x4f& Pjzq,Mat4x4f& proj,Mat4x4f& view)
   OpenGLModelViewMatrix.linear().matrix() << R;
   OpenGLModelViewMatrix.translation() << t;
 
-  for(int i=0;i<4;i++)
-  for(int j=0;j<4;j++)
+  for (int i=0;i<4;i++)
+  for (int j=0;j<4;j++)
   {
     view(i,j) = OpenGLModelViewMatrix.matrix()(i,j);
   }   
@@ -1826,7 +1807,7 @@ inline int getClosestTriangleID(const nanort::BVHAccel& nanoBVH,
         std::swap(childDists[0],childDists[1]);
       }
 
-      for(int i=0;i<2;i++)
+      for (int i=0;i<2;i++)
       {
         if (childDists[i]<=minDist) { nodeStack[++nodeStackIndex] = childIds[i]; }
       }
@@ -1889,7 +1870,7 @@ void genPoissonSamples(const std::vector<V3f>& vertices,
   std::vector<Utils_sampling::Vec3> nors(vertices.size());
   std::vector<int> tris(triangles.size()*3);
 
-  for(int i=0;i<vertices.size();i++)
+  for (int i=0;i<vertices.size();i++)
   {
     const V3f v = vertices[i];
     const V3f n = normals[i];
@@ -1897,10 +1878,10 @@ void genPoissonSamples(const std::vector<V3f>& vertices,
     nors[i] = Utils_sampling::Vec3(n[0],n[1],n[2]);
   }
 
-  for(int i=0;i<triangles.size();i++)
+  for (int i=0;i<triangles.size();i++)
   {
     const V3i t = triangles[i];
-    for(int j=0;j<3;j++) { tris[i*3+j] = t[j]; }
+    for (int j=0;j<3;j++) { tris[i*3+j] = t[j]; }
   }
 
   std::vector<Utils_sampling::Vec3> samplesPos;
@@ -1917,8 +1898,8 @@ void genPoissonSamples(const std::vector<V3f>& vertices,
   outTriangles = std::vector<V3i>(samplesPos.size());
   outBarycentrics = std::vector<V3f>(samplesPos.size());
 
-  for(int i=0;i<points.size();i++)  { points[i] = V3f(samplesPos[i].x,samplesPos[i].y,samplesPos[i].z);  }
-  for(int i=0;i<outNormals.size();i++) { outNormals[i] = V3f(samplesNor[i].x,samplesNor[i].y,samplesNor[i].z); }
+  for (int i=0;i<points.size();i++)  { points[i] = V3f(samplesPos[i].x,samplesPos[i].y,samplesPos[i].z);  }
+  for (int i=0;i<outNormals.size();i++) { outNormals[i] = V3f(samplesNor[i].x,samplesNor[i].y,samplesNor[i].z); }
 
   nanort::BVHBuildOptions nanoOptions;
   nanort::BVHAccel nanoBVH;
@@ -1947,89 +1928,6 @@ void genPoissonSamples(const std::vector<V3f>& vertices,
       outBarycentrics[i] = V3f(0,0,0);
     }
   }
-}
-
-bool writeTRSAAnim(const TRSAAnim& trsaAnim, const std::string& fileName)
-{
-  FILE *fw = fopen(fileName.c_str(),"wb");
-  if (!fw) { goto bail; }
-
-  fprintf(fw,"%d\n",int(trsaAnim.size()));
-
-  for (int i=0;i<trsaAnim.size();i++)
-  {
-    const TRSA<float>& trsa = trsaAnim[i];
-
-    fprintf(fw,"%e\n",trsa.trs.t(0));
-    fprintf(fw,"%e\n",trsa.trs.t(1));
-    fprintf(fw,"%e\n",trsa.trs.t(2));
-
-    fprintf(fw,"%e\n",trsa.trs.r(0));
-    fprintf(fw,"%e\n",trsa.trs.r(1));
-    fprintf(fw,"%e\n",trsa.trs.r(2));
-
-    fprintf(fw,"%e\n",trsa.trs.s);
-
-    fprintf(fw,"%d\n",int(trsa.angles.size()));
-    for(int j=0;j<trsa.angles.size();j++)
-    {
-      const V3f& a = trsa.angles[j];
-      fprintf(fw,"%e %e %e\n",a(0),a(1),a(2));  
-    }
-  }
-
-  fclose(fw);
-  return true;
-
-bail:
-  if (fw) { fclose(fw); }
-  return false;
-}
-
-bool readTRSA(TRSAAnim* out_trsaAnim,const std::string& fileName)
-{
-  TRSAAnim trsaAnim;
-
-  FILE* fr = fopen(fileName.c_str(),"rb");
-  if (!fr) { goto bail; }
-  
-  int numFrames;
-  if (fscanf(fr,"%d\n",&numFrames)!=1) { goto bail; }
-
-  trsaAnim.resize(numFrames);
-
-  for (int i=0;i<numFrames;i++)
-  {
-    TRSA<float>& trsa = trsaAnim[i];
-
-    if (fscanf(fr,"%e\n",&trsa.trs.t(0))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.t(1))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.t(2))!=1) { goto bail; }
-
-    if (fscanf(fr,"%e\n",&trsa.trs.r(0))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.r(1))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.r(2))!=1) { goto bail; }
-
-    if (fscanf(fr,"%e\n",&trsa.trs.s)!=1)    { goto bail; }
-
-    int numAngles = 0;
-    if (fscanf(fr,"%d\n",&numAngles)!=1) { goto bail; }
-
-    trsa.angles = std::vector<V3f>(numAngles);
-    for(int j=0;j<trsa.angles.size();j++)
-    {
-      V3f& a = trsa.angles[j];
-      if (fscanf(fr,"%e %e %e\n",&a(0),&a(1),&a(2))!=3) { goto bail; }
-    }
-  }
-
-  fclose(fr);
-  if (out_trsaAnim) { *out_trsaAnim = trsaAnim; }
-  return true;
-
-bail:
-  if (fr) { fclose(fr); }
-  return false;
 }
 
 Vec<3,ShortDual<3>> project(const Mat3x4f& PM, const V3f& x)
@@ -2066,8 +1964,8 @@ void drawCircle(Array2<Vec<N,T> >& dst,int cx,int cy,int r,const Vec<N,T>& color
   const int y0 = std::max(cy-r-1,0);
   const int y1 = std::min(cy+r+1,dst.height()-1);
 
-  for(int y=y0;y<=y1;y++)
-  for(int x=x0;x<=x1;x++)
+  for (int y=y0;y<=y1;y++)
+  for (int x=x0;x<=x1;x++)
   {
     if (x>=0 && y>=0 && x<dst.width() && y<dst.height())
     {
@@ -2109,13 +2007,11 @@ Vector<T> parametrizeTsAndAngles(const TRSA<T>& trsa)
 
   cnt = 4;
   for (int i=0;i<angles.size();i++)
+  for (int j=0;j<3;j++)
   {
-    for (int j=0;j<3;j++)
+    if (jointMaxLimits[i][j] > jointMinLimits[i][j])
     {
-      if (jointMaxLimits[i][j] > jointMinLimits[i][j])
-      {
-        x[cnt++] = angles[i][j];
-      }
+      x[cnt++] = angles[i][j];
     }
   }
   
@@ -2136,11 +2032,9 @@ void deparametrizeTsAndAngles(const Vector<T>& x,TRSA<T>* out_trsa)
 
   int cnt = 4;
   for (int i=0;i<angles.size();i++)
+  for (int j=0;j<3;j++)
   {
-    for (int j=0;j<3;j++)
-    {
-      angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
-    }
+    angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
   }
   
   if (out_trsa) { (*out_trsa).angles = angles; }
@@ -2151,16 +2045,14 @@ Vector<T> parametrizeTAndAngles(const TRSA<T>& trsa)
 {
   int cnt = 3;
   for (int i=0;i<trsa.angles.size();i++)
+  for (int j=0;j<3;j++)
   {
-    for (int j=0;j<3;j++)
+    if (jointMaxLimits[i][j] > jointMinLimits[i][j])
     {
-      if (jointMaxLimits[i][j] > jointMinLimits[i][j])
-      {
-        cnt++;
-      }
+      cnt++;
     }
   }
-
+  
   Vector<T> x(cnt);
 
   x[0] = trsa.trs.t(0);
@@ -2169,13 +2061,11 @@ Vector<T> parametrizeTAndAngles(const TRSA<T>& trsa)
 
   cnt = 3;
   for (int i=0;i<trsa.angles.size();i++)
+  for (int j=0;j<3;j++)
   {
-    for (int j=0;j<3;j++)
+    if (jointMaxLimits[i][j] > jointMinLimits[i][j])
     {
-      if (jointMaxLimits[i][j] > jointMinLimits[i][j])
-      {
-        x[cnt++] = trsa.angles[i][j];
-      }
+      x[cnt++] = trsa.angles[i][j];
     }
   }
   
@@ -2193,12 +2083,10 @@ void deparametrizeTAndAngles(const Vector<T>& x,TRSA<T>* out_trsa)
   trs.t(2) = x[2];
   
   int cnt = 3;
-  for(int i=0;i<angles.size();i++)
+  for (int i=0;i<angles.size();i++)
+  for (int j=0;j<3;j++)
   {
-    for(int j=0;j<3;j++)
-    {
-      angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
-    }
+    angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
   }
   
   if (out_trsa) { (*out_trsa).angles = angles; }
@@ -2241,20 +2129,18 @@ struct TrackBlobsEnergy
     trs.s = trsStatic.s;
 
     for (int i=1;i<curAngles.size();i++)
+    for (int j=0;j<3;j++)
     {
-      for (int j=0;j<3;j++)
+      if (curAngles[i][j].a > jointMaxLimits[i][j])
       {
-        if (curAngles[i][j].a > jointMaxLimits[i][j])
-        {
-          sum += T(blobAngleLambda)*sqr(curAngles[i][j] - jointMaxLimits[i][j]);
-        }
-        if (curAngles[i][j].a < jointMinLimits[i][j])
-        {
-          sum += T(blobAngleLambda)*sqr(jointMinLimits[i][j] - curAngles[i][j]);
-        }
+        sum += T(blobAngleLambda)*sqr(curAngles[i][j] - jointMaxLimits[i][j]);
+      }
+      if (curAngles[i][j].a < jointMinLimits[i][j])
+      {
+        sum += T(blobAngleLambda)*sqr(jointMinLimits[i][j] - curAngles[i][j]);
       }
     }
-
+    
     // fix backbone
     {
       T backBoneLambda = T(0.1);
@@ -2442,7 +2328,7 @@ struct AlignEnergy
     }
 
     std::vector<V3f> orgAngles(curAngles.size());
-    for(int i=0;i<orgAngles.size();i++) { orgAngles[i] = V3f(0,0,0); }
+    for (int i=0;i<orgAngles.size();i++) { orgAngles[i] = V3f(0,0,0); }
 
     std::vector<Mat<4,4,T>> Ms(joints.size());
 
@@ -2508,7 +2394,7 @@ struct AlignEnergy
     }
 
     #pragma omp parallel for
-    for(int i=0;i<anchors.size();i++)
+    for (int i=0;i<anchors.size();i++)
     {
       const Anchor& anchor = anchors[i];
       
@@ -2543,7 +2429,7 @@ lbfgsfloatval_t lbfgsEvalGradAndValue(void* instance,
   F& func = *((F*)instance);
 
   Vector<Dual<float>> arg(n);
-  for(int i=0;i<n;i++)
+  for (int i=0;i<n;i++)
   {
     arg(i).a = x[i];
     arg(i).b = SparseVector<float>(i);
@@ -2552,11 +2438,11 @@ lbfgsfloatval_t lbfgsEvalGradAndValue(void* instance,
   DenseDual<float> value;
   value.a = 0;
   value.b = Vector<float>(n);
-  for(int i=0;i<n;i++) { value.b[i] = 0; }
+  for (int i=0;i<n;i++) { value.b[i] = 0; }
 
   func(arg,value);
 
-  for(int i=0;i<n;i++)
+  for (int i=0;i<n;i++)
   {
     g[i] = value.b[i];
   }
@@ -2573,7 +2459,7 @@ Vector<float> minimizeLBFGS(const F& f,const Vector<float>& x0,int maxIter=10000
   lbfgsfloatval_t* x = lbfgs_malloc(n);
   lbfgs_parameter_t param;
 
-  for(int i=0;i<n;i++) { x[i] = x0(i); }
+  for (int i=0;i<n;i++) { x[i] = x0(i); }
 
   lbfgs_parameter_init(&param);
   param.max_iterations = maxIter;
@@ -2583,7 +2469,7 @@ Vector<float> minimizeLBFGS(const F& f,const Vector<float>& x0,int maxIter=10000
   lbfgs(n,x,&fx,lbfgsEvalGradAndValue<F>,0,(void*)(&f),&param);
 
   Vector<float> argmin(n);
-  for(int i=0;i<n;i++) { argmin(i) = x[i]; }
+  for (int i=0;i<n;i++) { argmin(i) = x[i]; }
 
   lbfgs_free(x);
   return argmin;
@@ -2623,11 +2509,9 @@ void genSamples(const std::vector<V3f>& vertices,
     const V3f& baryc = sampleBarycentrics[i];
 
     for (int j=0;j<3;j++)
+    for (int k=0;k<numWeightsPerVertex;k++)
     {
-      for (int k=0;k<numWeightsPerVertex;k++)
-      {
-        sampleWeights(k, i) += baryc[j]*weights(k, tri[j]);
-      }
+      sampleWeights(k, i) += baryc[j]*weights(k, tri[j]);
     }
   }
 }
@@ -2729,9 +2613,9 @@ A2uc getMask(const A2V3uc& image,const A2V3uc& background,const float threshold,
   }
 
   #pragma omp parallel for
-  for(int x=0;x<image.width();x++) mask(x,image.height()-1) = 0;
+  for (int x=0;x<image.width();x++) mask(x,image.height()-1) = 0;
   #pragma omp parallel for
-  for(int y=0;y<image.height();y++) mask(image.width()-1,y) = 0;
+  for (int y=0;y<image.height();y++) mask(image.width()-1,y) = 0;
 
   return mask;
 }
@@ -2855,7 +2739,7 @@ void loadViews(const std::vector<Video>& videos,
   std::vector<View>& views = *out_views;
 
   #pragma omp parallel for
-  for(int i=0;i<views.size();i++)
+  for (int i=0;i<views.size();i++)
   {
     const Video& video = videos[i];
     const Camera& camera = cameras[i];
@@ -2882,8 +2766,8 @@ bool readMat(FILE* f,Mat<M,N,float>* out_mat)
 {
   Mat<M,N,float> mat;
 
-  for(int i=0;i<M;i++)
-  for(int j=0;j<N;j++)
+  for (int i=0;i<M;i++)
+  for (int j=0;j<N;j++)
   {
     if (fscanf(f,"%f",&mat(i,j))!=1) { return false; }
   }
@@ -3044,6 +2928,7 @@ void doViewNavig(const Mode mode, View2D* inout_view)
 bool hideVideo = false;
 bool showCameras = false;
 bool showMesh = false;
+bool showJoints = false;
 bool showBlobModel = false;
 bool showBGSMask = false;
 bool showImageBlobs = false;
@@ -3057,7 +2942,6 @@ float predVelocity = 0.3f;
 float bgsThr = 96.0f;
 int imageBlobSize = 4;
 
-//bool track = false;
 int track = 0;
 bool fitModel = false;
 bool playback = false;
@@ -3091,6 +2975,7 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
   if (keyDown(KeyRight)) { selView = (selView+1)%numCameras; }
 
   if (keyDown(KeyS)) { showMesh = !showMesh; }
+  if (keyDown(KeyJ)) { showJoints = !showJoints; }
   if (keyDown(KeyB)) { showBlobModel = !showBlobModel; }
 
   const View& view = views[selView];
@@ -3135,7 +3020,32 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
   ///////////////////////////////////////////////////////////////////////////////
 
   std::vector<V3f> orgAngles(model.joints.size());
-  for(int i=0;i<orgAngles.size();i++) { orgAngles[i] = V3f(0,0,0); }
+  for (int i=0;i<orgAngles.size();i++) { orgAngles[i] = V3f(0,0,0); }
+  const Mat4x4f M = trsMatrix(trsaAnim[frame].trs);
+
+  std::vector<V3f> deformedJoints;
+  {
+    A2f jointWeights(model.joints.size(),model.joints.size());
+    for (int i=0;i<jointWeights.numel();i++)
+    {
+      jointWeights[i] = 0.0f;
+    }
+    for (int i=0;i<model.joints.size();i++)
+    {
+      jointWeights(i,i) = 1.0f;
+    }
+    deformedJoints = deformVertices(model.getRestPoseJointPositions(),
+                                    jointWeights,
+                                    model.joints,
+                                    orgAngles,
+                                    model.joints,
+                                    curAngles);
+
+    for (int i=0;i<deformedJoints.size();i++)
+    {
+      deformedJoints[i] = p2e(M*e2p(deformedJoints[i]));
+    }
+  }
 
   std::vector<V3f> deformedVertices = deformVertices(model.vertices,
                                                      model.weights,
@@ -3143,9 +3053,8 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
                                                      orgAngles,
                                                      model.joints,
                                                      curAngles);
-  const Mat4x4f M = trsMatrix(trsaAnim[frame].trs);
   #pragma omp parallel for
-  for(int i=0;i<deformedVertices.size();i++)
+  for (int i=0;i<deformedVertices.size();i++)
   {
     deformedVertices[i] = p2e(M*e2p(deformedVertices[i]));
   }
@@ -3158,7 +3067,7 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
   const V3f deformedHitPoint = ray.o+hitT*ray.d;
 
   std::vector<float> jointWeights(model.joints.size());
-  for(int j=0;j<jointWeights.size();j++) { jointWeights[j] = 0; }
+  for (int j=0;j<jointWeights.size();j++) { jointWeights[j] = 0; }
 
   V3f originalHitPoint = V3f(0,0,0);
   if (hit)
@@ -3167,14 +3076,10 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
     const V3f baryCoords = barycentric(deformedHitPoint,deformedVertices[triangle[0]],deformedVertices[triangle[1]],deformedVertices[triangle[2]]);
     originalHitPoint  = model.vertices[triangle[0]]*baryCoords(0) + model.vertices[triangle[1]]*baryCoords(1) + model.vertices[triangle[2]]*baryCoords(2);
     
-    for(int j=0;j<jointWeights.size();j++) { jointWeights[j] = 0; }
-
-    for(int i=0;i<3;i++)
+    for (int i=0;i<3;i++)
+    for (int j=0;j<jointWeights.size();j++)
     {
-      for(int j=0;j<jointWeights.size();j++)
-      {
-        jointWeights[j] += baryCoords[i]*model.weights(j,triangle[i]);
-      }
+      jointWeights[j] += baryCoords[i]*model.weights(j,triangle[i]);
     }
   }
   if (mode == ModeNone)
@@ -3205,7 +3110,7 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
         std::vector<V3f> deformedAnchorPoints = deformVertices(anchorSamples.points,anchorSamples.weights,model.joints,orgAngles,model.joints,curAngles);
 
         #pragma omp parallel for
-        for(int i=0;i<deformedAnchorPoints.size();i++)
+        for (int i=0;i<deformedAnchorPoints.size();i++)
         {
           deformedAnchorPoints[i] = p2e(M*e2p(deformedAnchorPoints[i]));
         }
@@ -3421,7 +3326,7 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
 #ifdef USE_OPENGL
   if (showCameras)
   {
-    for(int i=0;i<views.size();i++) { drawCamera(views[i].camera,views[i].image.width(),views[i].image.height(),2.6*2.0); }        
+    for (int i=0;i<views.size();i++) { drawCamera(views[i].camera,views[i].image.width(),views[i].image.height(),2.6*2.0); }        
   }
 #endif
   std::vector<V3f> normals = calcVertexNormals(deformedVertices,model.triangles);
@@ -3455,14 +3360,30 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
 
   if (hideVideo)
   {
+    // Draw Axis
+    glLineWidth(1);
+    glBegin(GL_LINES);
+      glColor3f(1.0f,0.0f,0.0f);
+      glVertex3f(0.0f,0.0f,0.0f);
+      glVertex3f(1.0f,0.0f,0.0f);
+
+      glColor3f(0.0f,1.0f,0.0f);
+      glVertex3f(0.0f,0.0f,0.0f);
+      glVertex3f(0.0f,1.0f,0.0f);
+      
+      glColor3f(0.0f,0.0f,1.0f);
+      glVertex3f(0.0f,0.0f,0.0f);
+      glVertex3f(0.0f,0.0f,1.0f);
+    glEnd();
+
     // Draw Grid
     glColor3f(0.4,0.4,0.4);
     glLineWidth(1);
     glBegin(GL_LINES);
     float k = 0.25f;
     int r = 8;
-    float y = 0.0f;//-0.7f;
-    for(int i=-r;i<=+r;i++)
+    float y = 0.0f;
+    for (int i=-r;i<=+r;i++)
     {
       glVertex3f(-float(r)*k,y,float(i)*k);
       glVertex3f(+float(r)*k,y,float(i)*k);
@@ -3525,6 +3446,19 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
 
   glDisable(GL_DEPTH_TEST);
 
+  if (showJoints)
+  {
+    glLineWidth(1);
+    glBegin(GL_LINES);
+      glColor3f(1.0f,1.0f,0.0f);
+      for (int i=1;i<model.joints.size();i++)
+      {
+        glVertex(deformedJoints[i]);
+        glVertex(deformedJoints[model.joints[i].parentId]);
+      }
+    glEnd();
+  }
+
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();
   gluOrtho2D(topLeft(0),bottomRight(0),bottomRight(1),topLeft(1));             
@@ -3543,7 +3477,7 @@ void doView(int frame,int numCameras,const std::vector<View>& views,std::vector<
     }
      
     glDisable(GL_DEPTH_TEST);
-    for(int i=0;i<anchors.size();i++)
+    for (int i=0;i<anchors.size();i++)
     {
       const Anchor& anchor = anchors[i];
       if (anchor.viewId==selView)
@@ -3668,7 +3602,7 @@ int main(int argc,char** argv)
   bboxSelector.viewId = -1;
 
   #pragma omp parallel for
-  for(int i=0;i<numCameras;i++)
+  for (int i=0;i<numCameras;i++)
   {
     Video& video = videos[i];
     Camera& camera = cameras[i];
@@ -3686,8 +3620,8 @@ int main(int argc,char** argv)
 
     {
       Eigen::Matrix<double,3,4> P;
-      for(int i=0;i<3;i++)
-      for(int j=0;j<4;j++)
+      for (int i=0;i<3;i++)
+      for (int j=0;j<4;j++)
       {
         P(i,j) = camera.P(i,j);
       }
@@ -3699,13 +3633,13 @@ int main(int argc,char** argv)
       
       decomposePMatrix2(P,R,K,C,t);
 
-      for(int i=0;i<3;i++)
-      for(int j=0;j<3;j++)
+      for (int i=0;i<3;i++)
+      for (int j=0;j<3;j++)
       {
         camera.R(i,j) = R(i,j);
         camera.K(i,j) = K(i,j);
       }
-      for(int i=0;i<3;i++)
+      for (int i=0;i<3;i++)
       {
         camera.C(i) = C(i);
       }
@@ -3713,7 +3647,7 @@ int main(int argc,char** argv)
   }
 
   int frameCount = INT_MAX;
-  for(int i=0;i<numCameras;i++)
+  for (int i=0;i<numCameras;i++)
   {
     frameCount = std::min(frameCount,vidGetNumFrames(videos[i]));
   }
@@ -3735,7 +3669,7 @@ int main(int argc,char** argv)
     TRS<float> trs;
     trs.t = V3f(0,0,0);
     trs.r = V3f(0,0,0);
-    trs.s = 1.38f;//0.805061f;
+    trs.s = 1.0f;
 
     trsaAnim.resize(frameCount);
     for (int i=0;i<frameCount;i++)
@@ -3812,6 +3746,7 @@ int main(int argc,char** argv)
           CheckBox(ID, "Show Cameras", &showCameras);
           CheckBox(ID, "Hide Video", &hideVideo);
           CheckBox(ID, "Show Mesh", &showMesh);
+          CheckBox(ID, "Show Joints", &showJoints);
           CheckBox(ID, "Show Blob Model", &showBlobModel);
           CheckBox(ID, "Show BGS Mask", &showBGSMask);
           CheckBox(ID, "Show Image Blobs", &showImageBlobs);
@@ -3911,6 +3846,22 @@ int main(int argc,char** argv)
             {
               printf("%s was not stored!\n", trsaFileName);
             }
+          }
+          if (Button(ID, "Export Animation"))
+          {
+            std::vector<FbxCameraParams> camerasParams(views.size());
+            for (int i=0;i<views.size();i++)
+            {
+              const View& view = views[i];
+              int w = view.image.width();
+              int h = view.image.height();
+              camerasParams[i].name = spf("KostilamCam%d",i);
+              camerasParams[i].location = view.camera.C;
+              camerasParams[i].interestPosition = view.camera.C + unproject(view.camera,V2f(w/2,h/2));
+              camerasParams[i].apertureWidth  = w / 1000.0f;
+              camerasParams[i].apertureHeight = h / 1000.0f;
+            }
+            exportAnim(model, trsaAnim, camerasParams, "c.fbx");
           }
           
           Spacer(ID);
