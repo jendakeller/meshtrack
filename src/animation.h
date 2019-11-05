@@ -120,6 +120,76 @@ bail:
   return false;
 }
 
+std::vector<float> get1DGaussianKernel(float sigma)
+{
+  int hSize = int(3.0f*sigma);
+
+  std::vector<float> kernel(2*hSize + 1);
+  float s = 0.0f;
+  for (int x=0;x<kernel.size();x++)
+  {
+    float v = exp(-((x-hSize)*(x-hSize)/(2.0f*sigma*sigma))) / (sqrt(2.0f*M_PI) * sigma);
+    kernel[x] = v;
+    s += v;
+  }
+  for (int x=0;x<kernel.size();x++)
+  {
+    kernel[x] /= s;
+  }
+
+  return kernel;
+}
+
+V3f clampRotation(const V3f& v)
+{
+  V3f u = v;
+
+  for (int i=0;i<3;i++)
+  {
+    while (u[i] < -M_PI) { u[i] += 2.0*M_PI; }
+    while (u[i] >= M_PI) { u[i] -= 2.0*M_PI; }
+  }
+
+  return u;
+}
+
+std::vector<TRSA<float>> smoothTRSAAnim(const std::vector<TRSA<float>>& inAnim, const float sigma)
+{
+  std::vector<TRSA<float>> outAnim(inAnim.size());
+
+  TRSA<float> avgTrsa;
+  avgTrsa.angles = std::vector<V3f>(inAnim[0].angles.size());
+
+  std::vector<float> kernel = get1DGaussianKernel(sigma);
+  int kernelSize = kernel.size();
+
+  for (int i=0;i<inAnim.size();i++)
+  {
+    avgTrsa.trs.t = V3f(0,0,0);
+    for (int j=0;j<avgTrsa.angles.size();j++)
+    {
+      avgTrsa.angles[j] = V3f(0,0,0);
+    }
+
+    for (int j=0;j<kernelSize;j++)
+    {
+      const float w = kernel[j];
+      const TRSA<float>& refTrsa = inAnim[clamp<int>(i+j-kernelSize/2, 0, inAnim.size()-1)];
+      avgTrsa.trs.t += w*refTrsa.trs.t;
+      for (int k=0;k<refTrsa.angles.size();k++)
+      {
+        V3f angle = clampRotation(refTrsa.angles[k]);
+        avgTrsa.angles[k] += w*angle;
+      }
+    }
+
+    avgTrsa.trs.s = inAnim[i].trs.s;
+    outAnim[i] = avgTrsa;
+  }
+
+  return outAnim;
+}
+
 void initializeSdkObjects(FbxManager*& pManager, FbxScene*& pScene)
 {
   //The first thing to do is to create the FBX Manager which is the object allocator for almost all the classes in the SDK
@@ -178,9 +248,9 @@ bool saveScene(FbxManager* pManager, FbxDocument* pScene, const char* pFilename,
     {
       if (pManager->GetIOPluginRegistry()->WriterIsFBX(lFormatIndex))
       {
-        FbxString lDesc =pManager->GetIOPluginRegistry()->GetWriterFormatDescription(lFormatIndex);
-        const char *lASCII = "ascii";
-        if (lDesc.Find(lASCII)>=0)
+        FbxString lDesc = pManager->GetIOPluginRegistry()->GetWriterFormatDescription(lFormatIndex);
+        const char* lBinary = "binary";
+        if (lDesc.Find(lBinary) >= 0)
         {
           pFileFormat = lFormatIndex;
           break;
@@ -381,6 +451,24 @@ FbxNode* createMesh(const SkinningModel& model, FbxScene* pScene, const char* pN
 
   FbxNode* lNode = FbxNode::Create(pScene,pName);
   lNode->SetNodeAttribute(lMesh);
+  
+  FbxLayer* lLayer = lMesh->GetLayer(0);
+  
+  if (!lLayer)
+  {
+    lMesh->CreateLayer();
+    lLayer = lMesh->GetLayer(0);
+  }
+
+  FbxLayerElementVertexColor* lLayerElement = FbxLayerElementVertexColor::Create(lMesh, "");
+  lLayerElement->SetMappingMode(FbxLayerElement::eByControlPoint);
+  lLayerElement->SetReferenceMode(FbxLayerElement::eDirect);
+  for (int i=0;i<model.vertices.size();i++)
+  {
+    FbxColor c(model.colors[i][0],model.colors[i][1],model.colors[i][2]);
+    lLayerElement->GetDirectArray().Add(c);
+  }
+  lLayer->SetVertexColors(lLayerElement);
   
   return lNode;
 }
