@@ -13,20 +13,13 @@
 
 
 template<typename T>
-struct TRS
+struct STA
 {
-  Vec<3,T> t; // translation
-  Vec<3,T> r; // rotation angles (xyz)
-  T        s; // scale
+  T s;                          // scale
+  Vec<3,T> t;                   // translation
+  std::vector<Vec<3,T>> angles; // joint rotation
 };
-
-template<typename T>
-struct TRSA
-{
-  TRS<T> trs;
-  std::vector<Vec<3,T>> angles;
-};
-typedef std::vector<TRSA<float>> TRSAAnim;
+typedef std::vector<STA<float>> STAAnim;
 
 struct FbxCameraParams
 {
@@ -37,31 +30,27 @@ struct FbxCameraParams
   float apertureHeight;
 };
 
-bool writeTRSAAnim(const TRSAAnim& trsaAnim, const std::string& fileName)
+bool writeSTAAnim(const STAAnim& staAnim, const std::string& fileName)
 {
+  if (staAnim.size() == 0) { return false; }
   FILE *fw = fopen(fileName.c_str(),"wb");
   if (!fw) { goto bail; }
 
-  fprintf(fw,"%d\n",int(trsaAnim.size()));
+  fprintf(fw,"%d\n",int(staAnim.size()));
+  fprintf(fw,"%d\n",int(staAnim[0].angles.size()));
+  fprintf(fw,"%e\n",staAnim[0].s);
 
-  for (int i=0;i<trsaAnim.size();i++)
+  for (int i=0;i<staAnim.size();i++)
   {
-    const TRSA<float>& trsa = trsaAnim[i];
+    const STA<float>& sta = staAnim[i];
 
-    fprintf(fw,"%e\n",trsa.trs.t(0));
-    fprintf(fw,"%e\n",trsa.trs.t(1));
-    fprintf(fw,"%e\n",trsa.trs.t(2));
+    fprintf(fw,"%e\n",sta.t(0));
+    fprintf(fw,"%e\n",sta.t(1));
+    fprintf(fw,"%e\n",sta.t(2));
 
-    fprintf(fw,"%e\n",trsa.trs.r(0));
-    fprintf(fw,"%e\n",trsa.trs.r(1));
-    fprintf(fw,"%e\n",trsa.trs.r(2));
-
-    fprintf(fw,"%e\n",trsa.trs.s);
-
-    fprintf(fw,"%d\n",int(trsa.angles.size()));
-    for(int j=0;j<trsa.angles.size();j++)
+    for(int j=0;j<sta.angles.size();j++)
     {
-      const V3f& a = trsa.angles[j];
+      const V3f& a = sta.angles[j];
       fprintf(fw,"%e %e %e\n",a(0),a(1),a(2));  
     }
   }
@@ -74,45 +63,42 @@ bail:
   return false;
 }
 
-bool readTRSA(TRSAAnim* out_trsaAnim,const std::string& fileName)
+bool readSTA(STAAnim* out_staAnim,const std::string& fileName)
 {
-  TRSAAnim trsaAnim;
+  if (!out_staAnim) { return false; }
+  STAAnim& staAnim = *out_staAnim;
 
   FILE* fr = fopen(fileName.c_str(),"rb");
   if (!fr) { goto bail; }
   
   int numFrames;
   if (fscanf(fr,"%d\n",&numFrames)!=1) { goto bail; }
+  staAnim.resize(numFrames);
 
-  trsaAnim.resize(numFrames);
+  int numAngles;
+  if (fscanf(fr,"%d\n",&numAngles)!=1) { goto bail; }
+
+  float scale;
+  if (fscanf(fr,"%e\n",&scale)!=1) { goto bail; }
 
   for (int i=0;i<numFrames;i++)
   {
-    TRSA<float>& trsa = trsaAnim[i];
+    STA<float>& sta = staAnim[i];
 
-    if (fscanf(fr,"%e\n",&trsa.trs.t(0))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.t(1))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.t(2))!=1) { goto bail; }
+    if (fscanf(fr,"%e\n",&sta.t[0])!=1) { goto bail; }
+    if (fscanf(fr,"%e\n",&sta.t[1])!=1) { goto bail; }
+    if (fscanf(fr,"%e\n",&sta.t[2])!=1) { goto bail; }
 
-    if (fscanf(fr,"%e\n",&trsa.trs.r(0))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.r(1))!=1) { goto bail; }
-    if (fscanf(fr,"%e\n",&trsa.trs.r(2))!=1) { goto bail; }
-
-    if (fscanf(fr,"%e\n",&trsa.trs.s)!=1)    { goto bail; }
-
-    int numAngles = 0;
-    if (fscanf(fr,"%d\n",&numAngles)!=1) { goto bail; }
-
-    trsa.angles = std::vector<V3f>(numAngles);
-    for(int j=0;j<trsa.angles.size();j++)
+    sta.s = scale;
+    sta.angles = std::vector<V3f>(numAngles);
+    for(int j=0;j<sta.angles.size();j++)
     {
-      V3f& a = trsa.angles[j];
+      V3f& a = sta.angles[j];
       if (fscanf(fr,"%e %e %e\n",&a(0),&a(1),&a(2))!=3) { goto bail; }
     }
   }
 
   fclose(fr);
-  if (out_trsaAnim) { *out_trsaAnim = trsaAnim; }
   return true;
 
 bail:
@@ -140,51 +126,53 @@ std::vector<float> get1DGaussianKernel(float sigma)
   return kernel;
 }
 
-V3f clampRotation(const V3f& v)
+STAAnim smoothSTAAnim(const STAAnim& inAnim, const float sigma)
 {
-  V3f u = v;
+  STAAnim anim = inAnim;
+  STAAnim outAnim(inAnim.size());
 
-  for (int i=0;i<3;i++)
-  {
-    while (u[i] < -M_PI) { u[i] += 2.0*M_PI; }
-    while (u[i] >= M_PI) { u[i] -= 2.0*M_PI; }
-  }
-
-  return u;
-}
-
-std::vector<TRSA<float>> smoothTRSAAnim(const std::vector<TRSA<float>>& inAnim, const float sigma)
-{
-  std::vector<TRSA<float>> outAnim(inAnim.size());
-
-  TRSA<float> avgTrsa;
-  avgTrsa.angles = std::vector<V3f>(inAnim[0].angles.size());
+  STA<float> avgSta;
+  avgSta.angles = std::vector<V3f>(inAnim[0].angles.size());
+  avgSta.s = inAnim[0].s;
 
   std::vector<float> kernel = get1DGaussianKernel(sigma);
   int kernelSize = kernel.size();
 
+  // The angles are normalized so that every angle is shifted to the range (angle_prev - 2.0*PI, angle_prev + 2.0*PI>.
+  // This prevents undesirable rotation caused by smoothing of two consecutive angles that abruptly change.
+  for (int i=1;i<anim.size();i++)
+  {
+    for (int j=0;j<anim[i].angles.size();j++)
+    {
+      for (int d=0;d<3;d++)
+      {
+        while (anim[i].angles[j][d] >  anim[i-1].angles[j][d] + 2.0*M_PI) { anim[i].angles[j][d] -= 2.0*M_PI; }
+        while (anim[i].angles[j][d] <= anim[i-1].angles[j][d] - 2.0*M_PI) { anim[i].angles[j][d] += 2.0*M_PI; }
+      }
+    }
+  }
+
   for (int i=0;i<inAnim.size();i++)
   {
-    avgTrsa.trs.t = V3f(0,0,0);
-    for (int j=0;j<avgTrsa.angles.size();j++)
+    avgSta.t = V3f(0,0,0);
+    for (int j=0;j<avgSta.angles.size();j++)
     {
-      avgTrsa.angles[j] = V3f(0,0,0);
+      avgSta.angles[j] = V3f(0,0,0);
     }
 
     for (int j=0;j<kernelSize;j++)
     {
       const float w = kernel[j];
-      const TRSA<float>& refTrsa = inAnim[clamp<int>(i+j-kernelSize/2, 0, inAnim.size()-1)];
-      avgTrsa.trs.t += w*refTrsa.trs.t;
-      for (int k=0;k<refTrsa.angles.size();k++)
+      const STA<float>& refSta = anim[clamp<int>(i+j-kernelSize/2, 0, anim.size()-1)];
+      avgSta.t += w*refSta.t;
+      for (int k=0;k<refSta.angles.size();k++)
       {
-        V3f angle = clampRotation(refTrsa.angles[k]);
-        avgTrsa.angles[k] += w*angle;
+        V3f angle = refSta.angles[k];
+        avgSta.angles[k] += w*angle;
       }
     }
 
-    avgTrsa.trs.s = inAnim[i].trs.s;
-    outAnim[i] = avgTrsa;
+    outAnim[i] = avgSta;
   }
 
   return outAnim;
@@ -563,7 +551,7 @@ void linkMeshToSkeleton(const SkinningModel& model, FbxScene* pScene, FbxNode* p
   lMeshAttribute->AddDeformer(lSkin);
 }
 
-void animate(const SkinningModel& model, const TRSAAnim& trsaAnim, FbxScene* pScene, std::vector<FbxNode*>& skeleton)
+void animate(const SkinningModel& model, const STAAnim& staAnim, FbxScene* pScene, std::vector<FbxNode*>& skeleton)
 {
   FbxString lAnimStackName;
   FbxTime lTime;
@@ -592,7 +580,7 @@ void animate(const SkinningModel& model, const TRSAAnim& trsaAnim, FbxScene* pSc
   tCurves[1] = skeleton[0]->LclTranslation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Y, true);
   tCurves[2] = skeleton[0]->LclTranslation.GetCurve(lAnimLayer, FBXSDK_CURVENODE_COMPONENT_Z, true);
 
-  for (int i=0;i<trsaAnim.size();i++)
+  for (int i=0;i<staAnim.size();i++)
   {
     lTime.SetSecondDouble(i / 60.0);
 
@@ -603,7 +591,7 @@ void animate(const SkinningModel& model, const TRSAAnim& trsaAnim, FbxScene* pSc
       {
         rCurves[j][k]->KeyModifyBegin();
         lKeyIndex = rCurves[j][k]->KeyAdd(lTime);
-        float angle = trsaAnim[i].angles[j][k];
+        float angle = staAnim[i].angles[j][k];
                 
         rCurves[j][k]->KeySetValue(lKeyIndex, -angle/M_PI*180.0);
         rCurves[j][k]->KeySetInterpolation(lKeyIndex, FbxAnimCurveDef::eInterpolationConstant);
@@ -616,14 +604,14 @@ void animate(const SkinningModel& model, const TRSAAnim& trsaAnim, FbxScene* pSc
       {
         tCurves[k]->KeyModifyBegin();
         lKeyIndex = tCurves[k]->KeyAdd(lTime);
-        tCurves[k]->KeySetValue(lKeyIndex, trsaAnim[i].trs.t[k] + model.joints[0].offset[k]);
+        tCurves[k]->KeySetValue(lKeyIndex, staAnim[i].t[k] + model.joints[0].offset[k]);
         tCurves[k]->KeySetInterpolation(lKeyIndex, FbxAnimCurveDef::eInterpolationCubic);
       }
     }
   }
 }
 
-bool createScene(const SkinningModel& in_model, const TRSAAnim& trsaAnim, const std::vector<FbxCameraParams>& camerasParams, FbxManager* pSdkManager, FbxScene* pScene)
+bool createScene(const SkinningModel& in_model, const STAAnim& staAnim, const std::vector<FbxCameraParams>& camerasParams, FbxManager* pSdkManager, FbxScene* pScene)
 {
   // create scene info
   FbxDocumentInfo* sceneInfo = FbxDocumentInfo::Create(pSdkManager,"SceneInfo");
@@ -641,9 +629,9 @@ bool createScene(const SkinningModel& in_model, const TRSAAnim& trsaAnim, const 
   SkinningModel model = in_model;
   
   float scale = 1.0f;
-  if (trsaAnim.size())
+  if (staAnim.size())
   {
-    scale = trsaAnim[0].trs.s;
+    scale = staAnim[0].s;
   }
   #pragma omp parallel for
   for (int i=0;i<model.vertices.size();i++)
@@ -678,12 +666,12 @@ bool createScene(const SkinningModel& in_model, const TRSAAnim& trsaAnim, const 
   linkMeshToSkeleton(model, pScene, lMesh, skeleton);
   
   // Animation
-  animate(model, trsaAnim, pScene, skeleton);
+  animate(model, staAnim, pScene, skeleton);
 
   return true;
 }
 
-bool exportAnim(const SkinningModel& model, const TRSAAnim& trsaAnim, const std::vector<FbxCameraParams>& camerasParams, const std::string& fileName)
+bool exportAnim(const SkinningModel& model, const STAAnim& staAnim, const std::vector<FbxCameraParams>& camerasParams, const std::string& fileName, float fps)
 {
   FbxManager* lSdkManager = NULL;
   FbxScene* lScene = NULL;
@@ -693,10 +681,10 @@ bool exportAnim(const SkinningModel& model, const TRSAAnim& trsaAnim, const std:
   initializeSdkObjects(lSdkManager, lScene);
 
   FbxGlobalSettings& lSettings = lScene->GetGlobalSettings();
-  lSettings.SetTimeMode(FbxTime::eFrames60);
+  lSettings.SetTimeMode(FbxTime::ConvertFrameRateToTimeMode(fps, 0.001));
   
   // Create the scene.
-  lResult = createScene(model, trsaAnim, camerasParams, lSdkManager, lScene);
+  lResult = createScene(model, staAnim, camerasParams, lSdkManager, lScene);
 
   if (lResult == false)
   {

@@ -299,9 +299,9 @@ struct BlobModel
 
   void updateBlobs(const std::vector<V3f>& vertices, const A2f& weights, std::vector<Gauss<float>>& blobs, int jointId);
   std::vector<Gauss<float>> kMeans(const std::vector<V3f>& vertices, const A2f& weights, const std::vector<V3f>& pivots, int numClusters, int jointId, int iters, bool fixedClusters=false);
-  std::vector<V3f> deformBlobCenters(const SkinningModel& model, const TRSA<float>& trsa) const;
-  std::vector<AABB> getBBoxes(const TRSA<float>& trsa, const SkinningModel& model, const std::vector<View>& views) const;
-  void updateBlobColors(const std::vector<View>& views, const SkinningModel& model, const TRSA<float>& trsa);
+  std::vector<V3f> deformBlobCenters(const SkinningModel& model, const STA<float>& sta) const;
+  std::vector<AABB> getBBoxes(const STA<float>& sta, const SkinningModel& model, const std::vector<View>& views) const;
+  void updateBlobColors(const std::vector<View>& views, const SkinningModel& model, const STA<float>& sta);
   void updateWeights(const std::vector<V3f>& vertices, const A2f& weights);
   void build(const SkinningModel& model);
   void build(const SkinningModel& model, const MeshPointSamples& samples);
@@ -329,18 +329,16 @@ Mat<3,3,T> rotationMatrix(const Vec<3,T>& angles)
 }
 
 template<typename T>
-Mat<4,4,T> trsMatrix(const TRS<T>& trs)
+Mat<4,4,T> stMatrix(const STA<T>& sta)
 {
-  Mat<3,3,T> R = rotationMatrix(trs.r);
+  const Vec<3,T> t = sta.t;
 
-  const Vec<3,T> t = trs.t;
-
-  const T s = trs.s;
+  const T s = sta.s;
   
-  return Mat<4,4,T>(s*R(0,0),s*R(0,1),s*R(0,2),t(0),
-                    s*R(1,0),s*R(1,1),s*R(1,2),t(1),
-                    s*R(2,0),s*R(2,1),s*R(2,2),t(2),
-                           0,       0,       0,  1);
+  return Mat<4,4,T>(s,0,0,t(0),
+                    0,s,0,t(1),
+                    0,0,s,t(2),
+                    0,0,0,  1);
 }
 
 template<typename T>
@@ -811,7 +809,7 @@ std::vector<Gauss<float>> BlobModel::kMeans(const std::vector<V3f>& vertices, co
   return clusters;
 }
 
-std::vector<V3f> BlobModel::deformBlobCenters(const SkinningModel& model, const TRSA<float>& trsa) const
+std::vector<V3f> BlobModel::deformBlobCenters(const SkinningModel& model, const STA<float>& sta) const
 {
   std::vector<V3f> blobCenters(blobs.size());
   for (int i=0;i<blobCenters.size();i++)
@@ -819,15 +817,15 @@ std::vector<V3f> BlobModel::deformBlobCenters(const SkinningModel& model, const 
     blobCenters[i] = blobs[i].mu;
   }
   
-  const Mat4x4f M = trsMatrix(trsa.trs);
+  const Mat4x4f M = stMatrix(sta);
   
-  std::vector<V3f> orgAngles(trsa.angles.size(), V3f(0,0,0));
+  std::vector<V3f> orgAngles(sta.angles.size(), V3f(0,0,0));
   blobCenters = deformVertices(blobCenters,
                                blobWeights,
                                model.joints,
                                orgAngles,
                                model.joints,
-                               trsa.angles);
+                               sta.angles);
 
   for (int i=0;i<blobCenters.size();i++)
   {
@@ -837,10 +835,10 @@ std::vector<V3f> BlobModel::deformBlobCenters(const SkinningModel& model, const 
   return blobCenters;
 }
 
-std::vector<AABB> BlobModel::getBBoxes(const TRSA<float>& trsa, const SkinningModel& model, const std::vector<View>& views) const
+std::vector<AABB> BlobModel::getBBoxes(const STA<float>& sta, const SkinningModel& model, const std::vector<View>& views) const
 {
   std::vector<AABB> bboxes(views.size());
-  std::vector<V3f> blobCenters = deformBlobCenters(model, trsa);
+  std::vector<V3f> blobCenters = deformBlobCenters(model, sta);
 
   #pragma omp parallel for
   for (int i=0;i<views.size();i++)
@@ -879,9 +877,9 @@ std::vector<AABB> BlobModel::getBBoxes(const TRSA<float>& trsa, const SkinningMo
   return bboxes;
 }
 
-void BlobModel::updateBlobColors(const std::vector<View>& views, const SkinningModel& model, const TRSA<float>& trsa)
+void BlobModel::updateBlobColors(const std::vector<View>& views, const SkinningModel& model, const STA<float>& sta)
 {
-  std::vector<V3f> blobCenters = deformBlobCenters(model, trsa);
+  std::vector<V3f> blobCenters = deformBlobCenters(model, sta);
 
   std::vector<int> counts(colors.size(), 0);
   for (int i=0;i<colors.size();i++)
@@ -1021,19 +1019,19 @@ Vec<N,T> sampleBilinear(const Array2<Vec<N,T>>& I,const V2f& uv)
                   (     s)*(     t)*I11);
 }
 
-std::vector<V3f> computeMeshColors(const std::vector<View>& views, const SkinningModel& model, const TRSA<float>& trsa)
+std::vector<V3f> computeMeshColors(const std::vector<View>& views, const SkinningModel& model, const STA<float>& sta)
 {
   std::vector<V3f> colors(model.vertices.size(), V3f(0, 0, 0));
 
-  const Mat4x4f M = trsMatrix(trsa.trs);
+  const Mat4x4f M = stMatrix(sta);
   
-  std::vector<V3f> orgAngles(trsa.angles.size(), V3f(0,0,0));
+  std::vector<V3f> orgAngles(sta.angles.size(), V3f(0,0,0));
   std::vector<V3f> deformedVertices = deformVertices(model.vertices,
                                                      model.weights,
                                                      model.joints,
                                                      orgAngles,
                                                      model.joints,
-                                                     trsa.angles);
+                                                     sta.angles);
 
   #pragma omp parallel for
   for (int i=0;i<deformedVertices.size();i++)
@@ -1989,13 +1987,10 @@ void drawCircle(Array2<Vec<N,T> >& dst,int cx,int cy,int r,const Vec<N,T>& color
 }
 
 template<typename T>
-Vector<T> parametrizeTsAndAngles(const TRSA<T>& trsa)
+Vector<T> parametrizeTsAndAngles(const STA<T>& sta)
 {
-  const TRS<T>& trs = trsa.trs;
-  const std::vector<Vec<3,T>>& angles = trsa.angles;
-
   int cnt = 4;
-  for (int i=0;i<angles.size();i++)
+  for (int i=0;i<sta.angles.size();i++)
   {
     for (int j=0;j<3;j++)
     {
@@ -2008,19 +2003,19 @@ Vector<T> parametrizeTsAndAngles(const TRSA<T>& trsa)
 
   Vector<T> x(cnt);
 
-  x[0] = trs.t(0);
-  x[1] = trs.t(1);
-  x[2] = trs.t(2);
+  x[0] = sta.t(0);
+  x[1] = sta.t(1);
+  x[2] = sta.t(2);
 
-  x[3] = trs.s;
+  x[3] = sta.s;
 
   cnt = 4;
-  for (int i=0;i<angles.size();i++)
+  for (int i=0;i<sta.angles.size();i++)
   for (int j=0;j<3;j++)
   {
     if (jointMaxLimits[i][j] > jointMinLimits[i][j])
     {
-      x[cnt++] = angles[i][j];
+      x[cnt++] = sta.angles[i][j];
     }
   }
   
@@ -2028,32 +2023,31 @@ Vector<T> parametrizeTsAndAngles(const TRSA<T>& trsa)
 }
 
 template<typename T>
-void deparametrizeTsAndAngles(const Vector<T>& x,TRSA<T>* out_trsa)
+void deparametrizeTsAndAngles(const Vector<T>& x,STA<T>* out_sta)
 {
-  std::vector<Vec<3,T>> angles(24);
-  TRS<T>& trs = (*out_trsa).trs;
-
-  trs.t(0) = x[0];
-  trs.t(1) = x[1];
-  trs.t(2) = x[2];
+  if (!out_sta) { return; }
+  STA<T>& sta = *out_sta;
+  sta.angles = std::vector<Vec<3,T>>(24);
   
-  trs.s    = x[3];
+  sta.t(0) = x[0];
+  sta.t(1) = x[1];
+  sta.t(2) = x[2];
+  
+  sta.s    = x[3];
 
   int cnt = 4;
-  for (int i=0;i<angles.size();i++)
+  for (int i=0;i<sta.angles.size();i++)
   for (int j=0;j<3;j++)
   {
-    angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
+    sta.angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
   }
-  
-  if (out_trsa) { (*out_trsa).angles = angles; }
 }
 
 template<typename T>
-Vector<T> parametrizeTAndAngles(const TRSA<T>& trsa)
+Vector<T> parametrizeTAndAngles(const STA<T>& sta)
 {
   int cnt = 3;
-  for (int i=0;i<trsa.angles.size();i++)
+  for (int i=0;i<sta.angles.size();i++)
   for (int j=0;j<3;j++)
   {
     if (jointMaxLimits[i][j] > jointMinLimits[i][j])
@@ -2064,17 +2058,17 @@ Vector<T> parametrizeTAndAngles(const TRSA<T>& trsa)
   
   Vector<T> x(cnt);
 
-  x[0] = trsa.trs.t(0);
-  x[1] = trsa.trs.t(1);
-  x[2] = trsa.trs.t(2);
+  x[0] = sta.t(0);
+  x[1] = sta.t(1);
+  x[2] = sta.t(2);
 
   cnt = 3;
-  for (int i=0;i<trsa.angles.size();i++)
+  for (int i=0;i<sta.angles.size();i++)
   for (int j=0;j<3;j++)
   {
     if (jointMaxLimits[i][j] > jointMinLimits[i][j])
     {
-      x[cnt++] = trsa.angles[i][j];
+      x[cnt++] = sta.angles[i][j];
     }
   }
   
@@ -2082,23 +2076,22 @@ Vector<T> parametrizeTAndAngles(const TRSA<T>& trsa)
 }
 
 template<typename T>
-void deparametrizeTAndAngles(const Vector<T>& x,TRSA<T>* out_trsa)
+void deparametrizeTAndAngles(const Vector<T>& x,STA<T>* out_sta)
 {
-  std::vector<Vec<3,T>> angles(24);
-  TRS<T>& trs = (*out_trsa).trs;
-
-  trs.t(0) = x[0];
-  trs.t(1) = x[1];
-  trs.t(2) = x[2];
+  if (!out_sta) { return; }
+  STA<T>& sta = *out_sta;
+  sta.angles = std::vector<Vec<3,T>>(24);
+  
+  sta.t(0) = x[0];
+  sta.t(1) = x[1];
+  sta.t(2) = x[2];
   
   int cnt = 3;
-  for (int i=0;i<angles.size();i++)
+  for (int i=0;i<sta.angles.size();i++)
   for (int j=0;j<3;j++)
   {
-    angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
+    sta.angles[i][j] = (jointMaxLimits[i][j] > jointMinLimits[i][j]) ? x[cnt++] : T(jointMaxLimits[i][j]);
   }
-  
-  if (out_trsa) { (*out_trsa).angles = angles; }
 }
 
 struct TrackBlobsEnergy
@@ -2106,7 +2099,7 @@ struct TrackBlobsEnergy
   const std::vector<View>& views;
   const BlobModel& blobModel;
   const std::vector<Joint<float>>& joints;
-  const TRS<float> trsStatic;
+  const float scaleStatic;
   std::vector<Vec<3,Dual<float>>> blobCenters;
 
   int iterCnt;
@@ -2114,8 +2107,8 @@ struct TrackBlobsEnergy
   TrackBlobsEnergy(const std::vector<View>& views,
                    const BlobModel& blobModel,
                    const std::vector<Joint<float>>& joints,
-                   const TRS<float>& trsStatic)
-  : views(views), blobModel(blobModel), joints(joints), trsStatic(trsStatic)
+                   const float scaleStatic)
+  : views(views), blobModel(blobModel), joints(joints), scaleStatic(scaleStatic)
   {
     blobCenters.resize(blobModel.blobs.size());
 
@@ -2128,15 +2121,11 @@ struct TrackBlobsEnergy
     double t0;
 
     t0 = timerGet();
-    TRSA<T> trsa;
-    TRS<T>& trs = trsa.trs;
-    std::vector<Vec<3,T>>& curAngles = trsa.angles;
-    deparametrizeTAndAngles(arg,&trsa);
-    trs.r(0) = trsStatic.r(0);
-    trs.r(1) = trsStatic.r(1);
-    trs.r(2) = trsStatic.r(2);
-    trs.s = trsStatic.s;
-
+    STA<T> sta;
+    std::vector<Vec<3,T>>& curAngles = sta.angles;
+    deparametrizeTAndAngles(arg,&sta);
+    sta.s = scaleStatic;
+    
     for (int i=1;i<curAngles.size();i++)
     for (int j=0;j<3;j++)
     {
@@ -2173,7 +2162,7 @@ struct TrackBlobsEnergy
       sum += heckNeckLambda*dot(diff,diff);
     }
 
-    const Mat<4,4,T> trsM = trsMatrix(trs);
+    const Mat<4,4,T> stM = stMatrix(sta);
 
     std::vector<V3f> orgAngles(curAngles.size());
     for (int i=0;i<orgAngles.size();i++) { orgAngles[i] = V3f(0,0,0); }
@@ -2186,7 +2175,7 @@ struct TrackBlobsEnergy
       const Mat<4,4,float> M0 = evalJointTransform(j,joints,orgAngles);
       const Mat<4,4,T    > M1 = evalJointTransform(j,joints,curAngles);
       
-      Ms[j] = trsM*(M1*Mat<4,4,T>(inverse(M0)));
+      Ms[j] = stM*(M1*Mat<4,4,T>(inverse(M0)));
     }
 
     std::vector<V3f> restBlobCenters(blobModel.blobs.size());
@@ -2318,22 +2307,17 @@ struct AlignEnergy
   template<typename T,typename T2>
   void operator()(const Vector<T>& arg,T2& sum) const
   {
-    TRSA<T> trsa;
-    TRS<T>& trs = trsa.trs;
-    std::vector<Vec<3,T>>& curAngles = trsa.angles;
+    STA<T> sta;
+    std::vector<Vec<3,T>>& curAngles = sta.angles;
 
-    trs.r(0) = 0.0f;
-    trs.r(1) = 0.0f;
-    trs.r(2) = 0.0f;
-    
     if (scale==0.0f)
     {
-      deparametrizeTsAndAngles(arg,&trsa);
+      deparametrizeTsAndAngles(arg,&sta);
     }
     else
     {
-      deparametrizeTAndAngles(arg,&trsa);
-      trs.s = scale;
+      deparametrizeTAndAngles(arg,&sta);
+      sta.s = scale;
     }
 
     for (int i=1;i<curAngles.size();i++)
@@ -2412,7 +2396,7 @@ struct AlignEnergy
       }
     }
     
-    Mat<4,4,T> trsM = trsMatrix(trs);
+    Mat<4,4,T> stM = stMatrix(sta);
     
     // deform sample points
     #pragma omp parallel for
@@ -2431,7 +2415,7 @@ struct AlignEnergy
         }
       }
 
-      Vec<3,T> diff = Vec<3,T>(fixedDeformedAnchorPoints[i]) - p2e(trsM*e2p(dv));
+      Vec<3,T> diff = Vec<3,T>(fixedDeformedAnchorPoints[i]) - p2e(stM*e2p(dv));
       #pragma omp critical
       {
         sum += T(1000000.0)*dot(diff,diff);
@@ -2455,7 +2439,7 @@ struct AlignEnergy
         }
       }
       
-      Vec<2,T> diff = Vec<2,T>(anchor.viewPoint) - p2e(Mat<3,4,T>(views[anchor.viewId].camera.P)*trsM*e2p(Vec<3,T>(dv)));
+      Vec<2,T> diff = Vec<2,T>(anchor.viewPoint) - p2e(Mat<3,4,T>(views[anchor.viewId].camera.P)*stM*e2p(Vec<3,T>(dv)));
       #pragma omp critical
       {
         sum += dot(diff,diff);
@@ -2927,50 +2911,44 @@ void genSamples(const std::vector<V3f>& vertices,
   }
 }
 
-void predicatePose(TRSAAnim* inout_trsaAnim, int frame, int predDir, float predVelocity)
+void predicatePose(STAAnim* inout_staAnim, int frame, int predDir, float predVelocity)
 {
-  TRSAAnim& trsaAnim = *inout_trsaAnim;
+  STAAnim& staAnim = *inout_staAnim;
 
   if (predDir > 0)
   {
-    if ((frame > 0) && (frame < trsaAnim.size()))
+    if ((frame > 0) && (frame < staAnim.size()))
     {
-      TRS<float> trsPred = trsaAnim[frame-1].trs;
-      std::vector<V3f> anglesPred = trsaAnim[frame-1].angles;
+      STA<float> staPred = staAnim[frame-1];
 
       if (frame > 1)
       {
-        trsPred.t += predVelocity*(trsPred.t - trsaAnim[frame-2].trs.t);
-        trsPred.r += predVelocity*(trsPred.r - trsaAnim[frame-2].trs.r);
-
-        for (int i=0;i<anglesPred.size();i++)
+        staPred.t += predVelocity*(staPred.t - staAnim[frame-2].t);
+        
+        for (int i=0;i<staPred.angles.size();i++)
         {
-          anglesPred[i] += predVelocity*(anglesPred[i] - trsaAnim[frame-2].angles[i]);
+          staPred.angles[i] += predVelocity*(staPred.angles[i] - staAnim[frame-2].angles[i]);
         }
       }
-      trsaAnim[frame].trs = trsPred;
-      trsaAnim[frame].angles = anglesPred;
+      staAnim[frame] = staPred;
     }
   }
   if (predDir < 0)
   {
-    if ((frame >= 0) && (frame < trsaAnim.size()-1))
+    if ((frame >= 0) && (frame < staAnim.size()-1))
     {
-      TRS<float> trsPred = trsaAnim[frame+1].trs;
-      std::vector<V3f> anglesPred = trsaAnim[frame+1].angles;
+      STA<float> staPred = staAnim[frame+1];
 
-      if (frame < trsaAnim.size()-2)
+      if (frame < staAnim.size()-2)
       {
-        trsPred.t += predVelocity*(trsPred.t - trsaAnim[frame+2].trs.t);
-        trsPred.r += predVelocity*(trsPred.r - trsaAnim[frame+2].trs.r);
+        staPred.t += predVelocity*(staPred.t - staAnim[frame+2].t);
 
-        for (int i=0;i<anglesPred.size();i++)
+        for (int i=0;i<staPred.angles.size();i++)
         {
-          anglesPred[i] += predVelocity*(anglesPred[i] - trsaAnim[frame+2].angles[i]);
+          staPred.angles[i] += predVelocity*(staPred.angles[i] - staAnim[frame+2].angles[i]);
         }
       }
-      trsaAnim[frame].trs = trsPred;
-      trsaAnim[frame].angles = anglesPred;
+      staAnim[frame] = staPred;
     }
   }
 }
@@ -3154,7 +3132,7 @@ void loadViews(const std::vector<Video>& videos,
                const std::vector<Camera>& cameras,
                const int frame,
                const std::vector<A2V3uc>& bgs,
-               const TRSAAnim& trsaAnim,
+               const STAAnim& staAnim,
                const SkinningModel& model,
                const BlobModel& blobModel,
                float bgsThr,
@@ -3179,7 +3157,7 @@ void loadViews(const std::vector<Video>& videos,
     view.camera = camera;
   }
 
-  std::vector<AABB> bboxes = blobModel.getBBoxes(trsaAnim[frame], model, views);
+  std::vector<AABB> bboxes = blobModel.getBBoxes(staAnim[frame], model, views);
   
   #pragma omp parallel for
   for (int i=0;i<views.size();i++)
@@ -3641,13 +3619,13 @@ std::vector<V3f> fixedDeformedAnchorPoints;
 MeshPointSamples anchorSamples;
 std::vector<bool> vertexSelection;
 
-TRSAAnim trsaAnim;
+STAAnim staAnim;
 BlobModel blobModel;
 
 void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D>* inout_view2ds,int* inout_selView,SkinningModel& model,const std::vector<Video>& videos)
 {
   int& selView = *inout_selView;
-  std::vector<V3f>& curAngles = trsaAnim[frame].angles;
+  std::vector<V3f>& curAngles = staAnim[frame].angles;
 
   if (keyDown(KeyLeft))  { selView = selView-1; if (selView<0) { selView = numCameras-1; } }
   if (keyDown(KeyRight)) { selView = (selView+1)%numCameras; }
@@ -3701,7 +3679,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
 
   std::vector<V3f> orgAngles(model.joints.size());
   for (int i=0;i<orgAngles.size();i++) { orgAngles[i] = V3f(0,0,0); }
-  const Mat4x4f M = trsMatrix(trsaAnim[frame].trs);
+  const Mat4x4f M = stMatrix(staAnim[frame]);
 
   std::vector<V3f> deformedJoints;
   {
@@ -3878,12 +3856,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
       mode = ModeNone;
     }
   }
-  //if (mouseUp(ButtonLeft)) { mode = ModePan; }
-  // if (!hit)
-  // {
-  //   if (mouseDown(ButtonLeft)&&(!keyPressed(KeyControl)))    { mode = ModePan; }
-  //   if (mousePressed(ButtonLeft)&&(!keyPressed(KeyControl))) { mode = ModePan; }
-  // }
+  
   doViewNavig(mode, &view2d);
   static V3f dragStartPoint3D;
   static std::vector<Anchor> dragStartPointPairs;
@@ -3891,7 +3864,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
 
   static int dragStartX;
   static std::vector<Camera> dragStartCameras;
-  static TRS<float> dragStartTrs;
+  static V3f dragStartT;
 
   if (mode==ModePick)
   {
@@ -3934,7 +3907,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
     if (mouseDown(ButtonLeft))
     {
       dragStartX = mouseX();
-      dragStartTrs = trsaAnim[frame].trs;
+      dragStartT = staAnim[frame].t;
       dragStartCameras.resize(views.size());
       for (int i=0;i<views.size();i++)
       {
@@ -3945,7 +3918,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
     if (mousePressed(ButtonLeft))
     {
       V3f delta(0, 0.0005f*float(mouseX()-dragStartX), 0);
-      trsaAnim[frame].trs.t = dragStartTrs.t + delta;
+      staAnim[frame].t = dragStartT + delta;
       for (int i=0;i<views.size();i++)
       {
         Camera camera = moveCamera(dragStartCameras[i], delta);
@@ -3960,7 +3933,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
     if (mouseDown(ButtonRight))
     {
       dragStartX = mouseX();
-      dragStartTrs = trsaAnim[frame].trs;
+      dragStartT = staAnim[frame].t;
       dragStartCameras.resize(views.size());
       for (int i=0;i<views.size();i++)
       {
@@ -4076,7 +4049,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
 
   if (showBlobModel && blobModel.blobs.size())
   {
-    std::vector<V3f> blobCenters = blobModel.deformBlobCenters(model, trsaAnim[frame]);
+    std::vector<V3f> blobCenters = blobModel.deformBlobCenters(model, staAnim[frame]);
     //V3f lightDir = normalize(view.camera.C-blobCenters[0])+0.5f*cameraUp-0.7f*cross(cameraDirection,cameraUp);
     V3f lightDir = normalize(view.camera.C-blobCenters[0])+0.5f*V3f(0,1,0)-0.7f*V3f(1,0,0);
     for (int i=0;i<blobCenters.size();i++)
@@ -4092,7 +4065,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
         }
       }
 
-      drawSphere(blobCenters[i], trsaAnim[frame].trs.s*blobModel.blobs[i].sigma, c, lightDir);
+      drawSphere(blobCenters[i], staAnim[frame].s*blobModel.blobs[i].sigma, c, lightDir);
     }
   }
 
@@ -4275,21 +4248,20 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
     if (optimizeScale)
     {
       deparametrizeTsAndAngles(minimizeLBFGS(AlignEnergy(views,anchors,anchorSamples.points,anchorSamples.weights,fixedIndices,fixedDeformedAnchorPoints,model.joints,prevAngles,angleLambda),
-        parametrizeTsAndAngles(trsaAnim[frame]),5),&trsaAnim[frame]);
+        parametrizeTsAndAngles(staAnim[frame]),5),&staAnim[frame]);
     }
     else
     {
-      deparametrizeTAndAngles(minimizeLBFGS(AlignEnergy(views,anchors,anchorSamples.points,anchorSamples.weights,fixedIndices,fixedDeformedAnchorPoints,model.joints,prevAngles,angleLambda,trsaAnim[frame].trs.s),
-        parametrizeTAndAngles(trsaAnim[frame]),5),&trsaAnim[frame]);
+      deparametrizeTAndAngles(minimizeLBFGS(AlignEnergy(views,anchors,anchorSamples.points,anchorSamples.weights,fixedIndices,fixedDeformedAnchorPoints,model.joints,prevAngles,angleLambda,staAnim[frame].s),
+        parametrizeTAndAngles(staAnim[frame]),5),&staAnim[frame]);
     }
-    //trs.r = V3f(0,0,0);
   }
 
   if (fitModel)
   {
     double t0 = timerGet();
-    deparametrizeTAndAngles(minimizeLBFGS(TrackBlobsEnergy(views, blobModel, model.joints, trsaAnim[frame].trs),
-                            parametrizeTAndAngles(trsaAnim[frame]),optIters),&trsaAnim[frame]);
+    deparametrizeTAndAngles(minimizeLBFGS(TrackBlobsEnergy(views, blobModel, model.joints, staAnim[frame].s),
+                            parametrizeTAndAngles(staAnim[frame]),optIters),&staAnim[frame]);
     printf("fitModel: %fs\n", (timerGet()-t0)*0.001);
 
     fitModel = false;
@@ -4298,11 +4270,11 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
   if (track != 0)
   {
     double t0 = timerGet();
-    deparametrizeTAndAngles(minimizeLBFGS(TrackBlobsEnergy(views, blobModel, model.joints, trsaAnim[frame].trs),
-                            parametrizeTAndAngles(trsaAnim[frame]),optIters),&trsaAnim[frame]);
+    deparametrizeTAndAngles(minimizeLBFGS(TrackBlobsEnergy(views, blobModel, model.joints, staAnim[frame].s),
+                            parametrizeTAndAngles(staAnim[frame]),optIters),&staAnim[frame]);
     printf("TrackBlobsEnergy = %.3fs [frame: %d]\n",(timerGet()-t0)*0.001,frame);
 
-    predicatePose(&trsaAnim, frame+track, track, predVelocity);
+    predicatePose(&staAnim, frame+track, track, predVelocity);
   }
 }
 
@@ -4312,7 +4284,7 @@ int main(int argc,char** argv)
   if (argc<9)
   {
     printf("usage:\n");
-    printf("\t%s dataPath %%s/cam%%d.PKRC first last %%s/cam%%d.mp4 %%s/bkg%%d.png model.skin anim.trsa\n", argv[0]);
+    printf("\t%s dataPath %%s/cam%%d.PKRC first last %%s/cam%%d.mp4 %%s/bkg%%d.png model.skin anim.sta\n", argv[0]);
     return 1;
   }
 
@@ -4323,7 +4295,7 @@ int main(int argc,char** argv)
   const char* videoFileFormat = argv[5];
   const char* backgroundFileFormat = argv[6];
   const char* skinningModelFileName = argv[7];
-  const char* trsaFileName = argv[8];
+  const char* staFileName = argv[8];
 
   int lastFrame = -1;
   int frame = 0;
@@ -4411,18 +4383,14 @@ int main(int argc,char** argv)
   //blobModel.build(model, anchorSamples);
   printf("blobModel.build: %fs\n", (timerGet() - tb)*0.001);
 
-  if (!readTRSA(&trsaAnim, trsaFileName))
+  if (!readSTA(&staAnim, staFileName))
   {
-    TRS<float> trs;
-    trs.t = V3f(0,0,0);
-    trs.r = V3f(0,0,0);
-    trs.s = 1.0f;
-
-    trsaAnim.resize(frameCount);
+    staAnim.resize(frameCount);
     for (int i=0;i<frameCount;i++)
     {
-      trsaAnim[i].trs = trs;
-      trsaAnim[i].angles = std::vector<V3f>(model.joints.size(), V3f(0,0,0));
+      staAnim[i].t = V3f(0,0,0);
+      staAnim[i].s = 1.0f;
+      staAnim[i].angles = std::vector<V3f>(model.joints.size(), V3f(0,0,0));
     }
   }
 
@@ -4449,16 +4417,16 @@ int main(int argc,char** argv)
   double t1 = timerGet();
   while (1)
   {
-    prevAngles = trsaAnim[frame].angles;
+    prevAngles = staAnim[frame].angles;
     
     if (frame!=lastFrame)
     {
       anchors.clear();
-      loadViews(videos, cameras, frame, bgs, trsaAnim, model, blobModel, bgsThr, imageBlobSize, &views);
+      loadViews(videos, cameras, frame, bgs, staAnim, model, blobModel, bgsThr, imageBlobSize, &views);
       lastFrame = frame;
     }
 
-    WindowBegin(ID,"",spf("Kostilam [%s]",trsaFileName).c_str(),Opts().showMaximized(true));
+    WindowBegin(ID,"",spf("Kostilam [%s]",staFileName).c_str(),Opts().showMaximized(true));
 
     if (windowCloseRequest()||keyDown(KeyEscape)) return false;
 
@@ -4481,7 +4449,7 @@ int main(int argc,char** argv)
           if (Button(ID,"Clear Anchors"))
           {
             anchors.clear();
-            prevAngles = trsaAnim[frame].angles;
+            prevAngles = staAnim[frame].angles;
             bboxSelector.viewId = -1;
             fixedIndices.clear();
             fixedDeformedAnchorPoints.clear();
@@ -4543,19 +4511,19 @@ int main(int argc,char** argv)
           Label(ID, "Background Subtraction\nThreshold:");
           if (SpinBox(ID, 0.0f, 255.0f, &bgsThr))
           {
-            loadViews(videos, cameras, frame, bgs, trsaAnim, model, blobModel, bgsThr, imageBlobSize, &views);
+            loadViews(videos, cameras, frame, bgs, staAnim, model, blobModel, bgsThr, imageBlobSize, &views);
           }
           Label(ID, "Image Blob Size:");
           if (SpinBox(ID, 2, 64, &imageBlobSize))
           {
-            loadViews(videos, cameras, frame, bgs, trsaAnim, model, blobModel, bgsThr, imageBlobSize, &views);
+            loadViews(videos, cameras, frame, bgs, staAnim, model, blobModel, bgsThr, imageBlobSize, &views);
           }
           Label(ID, "Opacity:");
           SpinBox(ID, 0.0f, 1.0f, &opacity);
           if (Button(ID, "Train Colors"))
           {
-            blobModel.updateBlobColors(views, model, trsaAnim[frame]);
-            model.colors = computeMeshColors(views, model, trsaAnim[frame]);
+            blobModel.updateBlobColors(views, model, staAnim[frame]);
+            model.colors = computeMeshColors(views, model, staAnim[frame]);
           }
           if (track != 0)
           {
@@ -4583,9 +4551,8 @@ int main(int argc,char** argv)
           }
           if (Button(ID, "Reset Pose"))
           {
-            trsaAnim[frame].trs.t = V3f(0,0,0);
-            trsaAnim[frame].trs.r = V3f(0,0,0);
-            trsaAnim[frame].angles = std::vector<V3f>(trsaAnim[frame].angles.size(),V3f(0,0,0));
+            staAnim[frame].t = V3f(0,0,0);
+            staAnim[frame].angles = std::vector<V3f>(staAnim[frame].angles.size(),V3f(0,0,0));
           }
           ToggleButton(ID, playback ? "Stop Playback" : "Start Playback", &playback, Opts().enabled(track==0));
           if (playback)
@@ -4594,13 +4561,13 @@ int main(int argc,char** argv)
           }
           if (Button(ID,"Filter Animation"))
           {
-            trsaAnim = smoothTRSAAnim(trsaAnim, 2.0f);
+            staAnim = smoothSTAAnim(staAnim, 2.0f);
           }
           if (Button(ID,"Save Animation"))
           {
-            if (!writeTRSAAnim(trsaAnim, trsaFileName))
+            if (!writeSTAAnim(staAnim, staFileName))
             {
-              printf("%s was not stored!\n", trsaFileName);
+              printf("%s was not stored!\n", staFileName);
             }
           }
           if (Button(ID, "Export Animation"))
@@ -4617,11 +4584,10 @@ int main(int argc,char** argv)
               camerasParams[i].apertureWidth  = w / 1000.0f;
               camerasParams[i].apertureHeight = h / 1000.0f;
             }
-            //exportAnim(model, trsaAnim, camerasParams, "c.fbx");
-            std::string fbxFileName = FileSaveDialog("Export Animation", 0, "*.fbx");
-            if (fbxFileName.c_str())
+            char* fbxFileName = FileSaveDialog("Export Animation", 0, "*.fbx");
+            if (fbxFileName)
             {
-              exportAnim(model, trsaAnim, camerasParams, fbxFileName.c_str());
+              exportAnim(model, staAnim, camerasParams, fbxFileName, vidGetFps(videos[0]));
             }
           }
           if (Button(ID, "Align Cameras"))
