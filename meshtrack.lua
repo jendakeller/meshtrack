@@ -13,7 +13,7 @@ solution ("meshtrack-".._ACTION)
     objdir "tmp/meshtrack"
     targetdir "bin"
     targetname "meshtrack"
-    debugargs { "C:/Users/Petul/.work/kostilam/data/stepanka ./calibration/gph0%d.pkrc 1 8 ./takes/take0/gph0%d_4.mp4 ./takes/take0/bkg0%d.png stepanka_v4.skin stepanka.trsa" }
+    debugargs { "C:/Users/Petul/.work/kostilam/data/stepanka ./calibration/gph0%d.pkrc 1 8 ./takes/take0/gph0%d_4.mp4 ./takes/take0/bkg0%d.png stepanka_v4.skin stepanka.sta" }
 	characterset "MBCS"
 
   configuration "Debug"
