@@ -218,3 +218,8 @@ void vidClose(Video video)
 {
   fas_close_video((fas_context_ref_type)video);
 }
+
+float vidGetFps(Video video)
+{
+  return (float)(1.0/(fas_get_frame_duration((fas_context_ref_type)video)/10000000.0));
+}

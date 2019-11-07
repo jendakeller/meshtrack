@@ -13,6 +13,7 @@ int   vidGetHeight(Video video);
 int   vidGetNumFrames(Video video);
 void  vidGetFrameData(Video video,int frame,void* data);
 void  vidClose(Video video);
+float vidGetFps(Video video);
 
 #ifdef __cplusplus
 }

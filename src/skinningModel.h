@@ -18,20 +18,19 @@ struct Mesh
 std::vector<V3f> calcVertexNormals(const std::vector<V3f>& vertices,const std::vector<V3i>& triangles)
 {
   std::vector<V3f> faceNormals(triangles.size());
-  for(int i=0;i<triangles.size();i++)
+  std::vector<V3f> vertexNormals(vertices.size(),V3f(0,0,0));
+  
+  for (int i=0;i<triangles.size();i++)
   {
     const V3i t = triangles[i];
     faceNormals[i] = normalize(cross(vertices[t[1]]-vertices[t[0]],
                                      vertices[t[2]]-vertices[t[0]]));
   }
 
-  std::vector<V3f> vertexNormals = std::vector<V3f>(vertices.size(),V3f(0,0,0));
-  for(int i=0;i<triangles.size();i++)
+  for (int i=0;i<triangles.size();i++)
+  for (int j=0;j<3;j++)
   {
-    for(int j=0;j<3;j++)
-    {
-      vertexNormals[triangles[i][j]] += faceNormals[i];
-    }
+    vertexNormals[triangles[i][j]] += faceNormals[i];
   }
   for(int i=0;i<vertexNormals.size();i++)
   {
@@ -43,8 +42,6 @@ std::vector<V3f> calcVertexNormals(const std::vector<V3f>& vertices,const std::v
 
 Mesh loadMeshFromOBJ(const std::string& fileName)
 {
-  printf("fileName=%s\n",fileName.c_str());
-
   Mesh mesh;
 
   tinyobj::attrib_t attrib;
@@ -182,12 +179,6 @@ public:
       V3f& offset = joints[i].offset;
       fscanf(fr, "%f %f %f %d\n", &(offset[0]), &(offset[1]), &(offset[2]), &(joints[i].parentId));
     }
-    // orgAngles.resize(numJoints);
-    // for (int i=0;i<numJoints;i++)
-    // {
-    //   V3f& anglei = orgAngles[i];
-    //   fscanf(fr, "%f %f %f\n", &(anglei[0]), &(anglei[1]), &(anglei[2]));
-    // }
     weights = A2f(numJoints, N);
     for (int i=0;i<N;i++)
     {
@@ -235,7 +226,7 @@ public:
       if (numJoints>12) JColors[12] = V3f(0.0f, 0.5f, 0.0f); // krk
       if (numJoints>13) JColors[13] = V3f(0.0f, 0.5f, 0.5f); // leva lopatka
       if (numJoints>14) JColors[14] = V3f(0.5f, 0.5f, 0.0f); // prava lopatka
-      if (numJoints>15) JColors[15] = V3f(0.0f, 0.0f, 0.0f); // hlava
+      if (numJoints>15) JColors[15] = V3f(0.75f, 0.75f, 0.75f); // hlava
       if (numJoints>16) JColors[16] = V3f(1.0f, 0.5f, 0.5f); // levy rameno
       if (numJoints>17) JColors[17] = V3f(0.9f, 0.6f, 0.125f); // pravy rameno
       if (numJoints>18) JColors[18] = V3f(0.25f, 0.0f, 0.5f); // levy loket
@@ -256,11 +247,6 @@ public:
         skinningWeightColors[i] = c;
       }
     }
-
-    // vertices.clear();
-    // triangles.clear();
-    // colors.clear();
-    // weights = A2f();
   }
 
   void save(const char* filename)
