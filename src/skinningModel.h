@@ -289,6 +289,78 @@ public:
 
     return restPoseJointPositions;
   }
+
+  void computeSkeletalMesh(std::vector<V3f>& vertices, std::vector<V3i>& triangles, A2f& weights) const
+  {
+    vertices.reserve((joints.size()-1)*6);
+    triangles.reserve((joints.size()-1)*8);
+    weights = A2f(joints.size(), (joints.size()-1)*6);
+
+    std::vector<V3f> restPoseJointPositions = getRestPoseJointPositions();
+
+    for (int i=0;i<weights.numel();i++)
+    {
+      weights[i] = 0.0f;
+    }
+
+    for (int i=1;i<joints.size();i++)
+    {
+      V3f b1,b2,b3;
+      int parentId = joints[i].parentId;
+      const V3f& v1 = restPoseJointPositions[parentId];
+      const V3f& v2 = restPoseJointPositions[i];
+      b1 = v2 - v1;
+      float boneLength = norm(b1);
+      b1 = b1 / boneLength;
+      int dMax = 0;
+      float vMax = b1[0];
+      for (int j=1;j<3;j++)
+      {
+        if (b1[j] > vMax)
+        {
+          vMax = b1[j];
+          dMax = j;
+        }
+      }
+      if (dMax == 0)
+      {
+        b2 = normalize(V3f(b1[2],0.0f,-b1[0]));
+      }
+      else if (dMax == 1)
+      {
+        b2 = normalize(V3f(-b1[1],b1[0],0.0f));
+      }
+      else
+      {
+        b2 = normalize(V3f(0.0f,-b1[2],b1[1]));
+      }
+      b3 = cross(b1,b2);
+
+      int vOffset = vertices.size();
+      float s = 0.1f*boneLength;
+      vertices.push_back(v1);
+      vertices.push_back(v1 + s*(b1 + b2));
+      vertices.push_back(v1 + s*(b1 + b3));
+      vertices.push_back(v1 + s*(b1 - b2));
+      vertices.push_back(v1 + s*(b1 - b3));
+      vertices.push_back(v2);
+
+      for (int j=vOffset;j<vOffset+6;j++)
+      {
+        weights(parentId, j) = 1.0f;
+      }
+
+      triangles.push_back(V3i(vOffset, vOffset+2, vOffset+1));
+      triangles.push_back(V3i(vOffset, vOffset+3, vOffset+2));
+      triangles.push_back(V3i(vOffset, vOffset+4, vOffset+3));
+      triangles.push_back(V3i(vOffset, vOffset+1, vOffset+4));
+
+      triangles.push_back(V3i(vOffset+5, vOffset+1, vOffset+2));
+      triangles.push_back(V3i(vOffset+5, vOffset+2, vOffset+3));
+      triangles.push_back(V3i(vOffset+5, vOffset+3, vOffset+4));
+      triangles.push_back(V3i(vOffset+5, vOffset+4, vOffset+1));
+    }
+  }
 };
 
 #endif

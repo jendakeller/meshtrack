@@ -1053,9 +1053,9 @@ std::vector<V3f> computeMeshColors(const std::vector<View>& views, const Skinnin
     const A2V3uc& imgSrc = views[i].image;
     A2V3f& imgDst = viewImages[i];
     #pragma omp parallel for
-    for (int i=0;i<imgDst.numel();i++)
+    for (int j=0;j<imgDst.numel();j++)
     {
-      imgDst[i] = V3f(imgSrc[i]) / 255.0f;
+      imgDst[j] = V3f(imgSrc[j]) / 255.0f;
     }
   }
 
@@ -3260,7 +3260,7 @@ void initJointLimits(const SkinningModel& model, std::vector<V3f>* out_jointMinL
 
   jointMinLimits[23] = V3f( 0.0f,  0.0f,  0.0f); // right hand
   jointMaxLimits[23] = V3f( 0.0f,  0.0f,  0.0f);
-return;
+
   jointMinLimits[4]  = V3f(-M_PI*2/3,0.0f,  0.0f); // left knee
   jointMinLimits[5]  = V3f(-M_PI*2/3,0.0f,  0.0f); // right knee
   //// jointMinLimits[7]  = V3f(-M_PI/4,  0.0f,  0.0f); // left ankle
@@ -3591,7 +3591,7 @@ bool showImageBlobs = false;
 ModelViewMode modelViewMode = MODEL_VIEW_MODE_NORMALS;
 Mode mode = ModeNone;
 
-bool optimizeScale = false;
+bool optimizeScale = true;
 int optIters = 1000;
 float predVelocity = 0.3f;
 float bgsThr = 96.0f;
@@ -3621,6 +3621,7 @@ std::vector<bool> vertexSelection;
 
 STAAnim staAnim;
 BlobModel blobModel;
+
 
 void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D>* inout_view2ds,int* inout_selView,SkinningModel& model,const std::vector<Video>& videos)
 {
@@ -3662,6 +3663,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
   getMatrices(view.camera.P,Mproj,Mview);
 
   glViewport(0,0,widgetWidth(),widgetHeight());
+  glClearColor(0.359375f,0.359375f,0.359375f,1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   const V2f topLeft = viewport2canvas(view2d,V2f(0,0));
@@ -4007,7 +4009,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
     texImage = GLTexture2D(view.image);
   }
   texImage.setMagFilter(GL_NEAREST);
-  texImage.setMinFilter(GL_LINEAR);       
+  texImage.setMinFilter(GL_LINEAR);
   if (!hideVideo)
   {
     texImage.bind();
@@ -4126,7 +4128,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
     glDisable(GL_BLEND);
 
     // Draw Grid
-    glColor3f(0.4,0.4,0.4);
+    glColor3f(0.25,0.25,0.25);
     glLineWidth(1);
     glBegin(GL_LINES);
     float k = 0.25f;
@@ -4161,20 +4163,46 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
   }
   glDisable(GL_BLEND);
 
-  glDisable(GL_DEPTH_TEST);
-
   if (showJoints)
   {
-    glLineWidth(1);
-    glBegin(GL_LINES);
-      glColor3f(1.0f,1.0f,0.0f);
-      for (int i=1;i<model.joints.size();i++)
+    V3f c(1.0f,0.0f,1.0f);
+    std::vector<V3f> vertices;
+    std::vector<V3i> triangles;
+    A2f weights;
+    model.computeSkeletalMesh(vertices, triangles, weights);
+    vertices = deformVertices(vertices,
+                              weights,
+                              model.joints,
+                              orgAngles,
+                              model.joints,
+                              curAngles);
+
+    for (int i=0;i<vertices.size();i++)
+    {
+      vertices[i] = p2e(M*e2p(vertices[i]));
+    }
+    V3f lightDir = normalize(view.camera.C-vertices[0])+0.5f*V3f(0,1,0)-0.7f*V3f(1,0,0);
+    std::vector<V3f> normals = calcVertexNormals(vertices, triangles);
+
+    glBegin(GL_TRIANGLES);
+    {
+      for (int j=0;j<triangles.size();j++)
       {
-        glVertex(deformedJoints[i]);
-        glVertex(deformedJoints[model.joints[i].parentId]);
+        for (int i=0;i<3;i++)
+        {
+          const int vId = triangles[j][i];
+          const V3f& v = vertices[vId];
+          const V3f& n = normals[vId];
+
+          glColor(c*shade(n,lightDir));
+          glVertex(v);
+        }
       }
+    }
     glEnd();
   }
+
+  glDisable(GL_DEPTH_TEST);
 
   glMatrixMode(GL_PROJECTION);
   glLoadIdentity();
@@ -4192,7 +4220,7 @@ void doView(int frame,int numCameras,std::vector<View>& views,std::vector<View2D
       const Mat4x4f M1 = evalJointTransform(j,model.joints,curAngles);
       Ms[j] = M1*Mat4x4f(inverse(M0));
     }
-     
+
     glDisable(GL_DEPTH_TEST);
     for (int i=0;i<anchors.size();i++)
     {
@@ -4284,7 +4312,7 @@ int main(int argc,char** argv)
   if (argc<9)
   {
     printf("usage:\n");
-    printf("\t%s dataPath %%s/cam%%d.PKRC first last %%s/cam%%d.mp4 %%s/bkg%%d.png model.skin anim.sta\n", argv[0]);
+    printf("\t%s dataPath %%s/cam%%d.pkrc first last %%s/cam%%d.mp4 %%s/bkg%%d.png model.skin anim.sta\n", argv[0]);
     return 1;
   }
 
@@ -4406,7 +4434,7 @@ int main(int argc,char** argv)
     view2d.zoom = 1;
     view2d.angle = 0;
   }
-  int selView = 3;
+  int selView = 0;
   
   guiInit();
   GLContext* glCtx = new GLContext();
@@ -4467,7 +4495,6 @@ int main(int argc,char** argv)
           CheckBox(ID, "Show Blob Model", &showBlobModel);
           CheckBox(ID, "Show BGS Mask", &showBGSMask);
           CheckBox(ID, "Show Image Blobs", &showImageBlobs);
-
           // HBoxLayoutBegin(ID);
           //   Label(ID, "Angle Lambda:");
           //   SpinBox(ID, 0.0f, 1000000.0f, &angleLambda);
