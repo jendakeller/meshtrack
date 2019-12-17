@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cmath>
 #include <vector>
+#include <string>
 
 #include "md5.h"
 #include "ffmpeg_fas.h"
