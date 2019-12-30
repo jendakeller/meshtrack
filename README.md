@@ -66,9 +66,7 @@ https://github.com/jamriska/kostilam-selfcal
 https://github.com/jendakeller/kostilam-skinner
 
 ## License
-The code is released into the public domain. You can do anything you want with it.
-
-However, you should be aware that the application is using [liblbfgs](https://github.com/chokkan/liblbfgs) library,
+You should be aware that the application is using [liblbfgs](https://github.com/chokkan/liblbfgs) library,
 [FBX SDK](https://www.autodesk.com/developer-network/platform-technologies/fbx-sdk-2019-0) and SMPL[1] model.
 It is your responsibility to make sure you're not infringing any patent holder's rights by using this code.
 
